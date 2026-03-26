@@ -21,6 +21,24 @@
       "already_configured": "This router is already configured."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Evertz Quartz Debug & Connection Options",
+        "description": "These settings can be changed at any time without restarting Home Assistant.",
+        "data": {
+          "verbose_logging": "Verbose TCP logging (log every TX/RX message)",
+          "reconnect_delay": "Reconnect delay (seconds)",
+          "connect_timeout": "Connection timeout (seconds)"
+        },
+        "data_description": {
+          "verbose_logging": "When enabled, every raw Quartz protocol message sent and received is written to the Home Assistant log at DEBUG level. Useful for troubleshooting routing issues.",
+          "reconnect_delay": "How long to wait before attempting to reconnect after a connection drop.",
+          "connect_timeout": "Maximum time allowed to establish the initial TCP connection."
+        }
+      }
+    }
+  },
   "services": {
     "route": {
       "name": "Route Source to Destination",

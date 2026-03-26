@@ -84,3 +84,10 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class CannotConnect(Exception):
     """Error to indicate we cannot connect."""
+
+
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        """Return the options flow handler."""
+        from .options_flow import EvertzQuartzOptionsFlow
+        return EvertzQuartzOptionsFlow(config_entry)

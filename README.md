@@ -111,3 +111,59 @@ The **Quartz Remote Control Protocol** is an open ASCII-based protocol operating
 ## License
 
 MIT
+
+---
+
+## Debug & Diagnostics
+
+### Enabling debug logging
+
+Add this to your `configuration.yaml` to turn on debug-level logs for the integration:
+
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.evertz_quartz: debug
+    custom_components.evertz_quartz.quartz_client: debug
+```
+
+Restart Home Assistant, then check **Settings → System → Logs**.
+
+### Verbose TCP logging (log every message)
+
+For deeper protocol-level tracing — every raw Quartz TX/RX frame logged — enable **Verbose TCP logging** without restarting:
+
+1. Go to **Settings → Devices & Services**
+2. Click **Evertz Quartz Router → Configure**
+3. Toggle **Verbose TCP logging** on and click Submit
+
+You'll see entries like:
+```
+TX → .SVV003,001
+RX ← .UVV003,001
+RX ← .A
+```
+
+Turn it off the same way once you're done — it's chatty on busy routers.
+
+### Download diagnostics
+
+Home Assistant's built-in diagnostics dump captures a full JSON snapshot:
+- Connection state (connected, reconnect count, timestamps)
+- All current routes
+- All source and destination names
+- Message counters and the last 20 errors
+- All active options
+
+To download it: **Settings → Devices & Services → Evertz Quartz Router → ⋮ → Download diagnostics**
+
+### Connection options (Configure panel)
+
+| Option | Default | Description |
+|---|---|---|
+| **Verbose TCP logging** | Off | Log every raw TX/RX Quartz frame at DEBUG level |
+| **Reconnect delay** | 5s | Wait time before reconnecting after a drop |
+| **Connection timeout** | 10s | Max time to establish the initial TCP connection |
+
+All options apply immediately — no Home Assistant restart required.
