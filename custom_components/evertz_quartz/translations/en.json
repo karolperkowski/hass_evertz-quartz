@@ -1,0 +1,44 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Evertz Quartz Router",
+        "description": "Enter the connection details for your Evertz EQX/EQT router or MAGNUM controller.",
+        "data": {
+          "host": "IP Address",
+          "port": "TCP Port",
+          "max_sources": "Max Sources",
+          "max_destinations": "Max Destinations",
+          "levels": "Levels (e.g. V, VA, VABC)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the router. Check the IP address and port.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This router is already configured."
+    }
+  },
+  "services": {
+    "route": {
+      "name": "Route Source to Destination",
+      "description": "Routes a source to a destination on the Evertz router.",
+      "fields": {
+        "destination": {
+          "name": "Destination",
+          "description": "The destination number (1-based)."
+        },
+        "source": {
+          "name": "Source",
+          "description": "The source number (1-based)."
+        },
+        "levels": {
+          "name": "Levels",
+          "description": "Optional level override (e.g. V, VA, VABC). Defaults to the configured levels."
+        }
+      }
+    }
+  }
+}
