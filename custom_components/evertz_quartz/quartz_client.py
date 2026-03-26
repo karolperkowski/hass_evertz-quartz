@@ -24,7 +24,7 @@ RE_ROUTE_UPDATE = re.compile(r"^\.UV([A-Za-z]*)(\d+),(\d+)$")
 
 # Mnemonic responses
 RE_DEST_MNEMONIC = re.compile(r"^\.RD(\d+),(.+)$")
-RE_SRC_MNEMONIC = re.compile(r"^\.RT(\d+),(.+)$")
+RE_SRC_MNEMONIC  = re.compile(r"^\.RT(\d+),(.+)$")
 
 
 @dataclass
@@ -37,7 +37,7 @@ class QuartzStats:
     messages_received: int = 0
     messages_sent: int = 0
     route_updates: int = 0
-    errors: list = field(default_factory=list)  # last 20 errors
+    errors: list = field(default_factory=list)  # last 20
 
     def record_error(self, msg: str) -> None:
         self.errors.append(f"{time.strftime('%H:%M:%S')} {msg}")
@@ -55,6 +55,7 @@ class QuartzClient:
         max_destinations: int,
         levels: str,
         route_callback: Callable[[int, int, str], None] | None = None,
+        mnemonic_callback: Callable[[], None] | None = None,
         connection_callback: Callable[[bool], None] | None = None,
         verbose_logging: bool = DEFAULT_VERBOSE_LOGGING,
         reconnect_delay: int = DEFAULT_RECONNECT_DELAY,
@@ -75,13 +76,21 @@ class QuartzClient:
         self.destination_names: dict[int, str] = {}
         self.stats = QuartzStats()
 
+        # Callbacks
         self._route_callback = route_callback
+        self._mnemonic_callback = mnemonic_callback   # fired after each mnemonic update
         self._connection_callback = connection_callback
+
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._listen_task: asyncio.Task | None = None
         self._running = False
         self._connected = False
+
+        # Track how many mnemonic responses we expect so we can fire
+        # the callback once all names have arrived.
+        self._mnemonics_expected: int = 0
+        self._mnemonics_received: int = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -122,12 +131,7 @@ class QuartzClient:
             _LOGGER.debug("Connect timeout updated to %ds", connect_timeout)
 
     async def route(self, destination: int, source: int, levels: str | None = None) -> bool:
-        """
-        Route a source to a destination.
-
-        Command: .SV[levels][dest_3digit],[src_3digit]\\r
-        Example: .SVV003,001\\r
-        """
+        """Route a source to a destination.  .SV[levels][dest_3],[src_3]\\r"""
         if not self._connected or self._writer is None:
             msg = "Cannot route: not connected to router"
             _LOGGER.warning(msg)
@@ -135,10 +139,7 @@ class QuartzClient:
             return False
 
         lvl = levels or self.levels
-        dest_str = str(destination).zfill(3)
-        src_str = str(source).zfill(3)
-        cmd = f".SV{lvl}{dest_str},{src_str}\r"
-
+        cmd = f".SV{lvl}{str(destination).zfill(3)},{str(source).zfill(3)}\r"
         try:
             self._tx(cmd)
             self._writer.write(cmd.encode())
@@ -158,8 +159,7 @@ class QuartzClient:
             return
         _LOGGER.debug("Polling all %d destination routes", self.max_destinations)
         for dest in range(1, self.max_destinations + 1):
-            dest_str = str(dest).zfill(3)
-            cmd = f".QL{self.levels}{dest_str}\r"
+            cmd = f".QL{self.levels}{str(dest).zfill(3)}\r"
             try:
                 self._tx(cmd)
                 self._writer.write(cmd.encode())
@@ -170,14 +170,18 @@ class QuartzClient:
                 break
 
     async def query_all_mnemonics(self) -> None:
-        """Fetch source & destination labels from the router on startup."""
+        """Fetch source & destination labels from the router."""
         if not self._connected or self._writer is None:
             return
+
+        total = self.max_destinations + self.max_sources
+        self._mnemonics_expected = total
+        self._mnemonics_received = 0
         _LOGGER.debug(
-            "Fetching mnemonics: %d destinations, %d sources",
-            self.max_destinations,
-            self.max_sources,
+            "Fetching mnemonics: %d destinations + %d sources (%d total)",
+            self.max_destinations, self.max_sources, total,
         )
+
         try:
             for dest in range(1, self.max_destinations + 1):
                 cmd = f".RD{dest}\r"
@@ -198,7 +202,7 @@ class QuartzClient:
             self.stats.record_error(f"Mnemonic query failed: {err}")
 
     def get_diagnostics(self) -> dict:
-        """Return a snapshot of all runtime state for HA diagnostics."""
+        """Return a runtime snapshot for HA diagnostics."""
         return {
             "connection": {
                 "host": self.host,
@@ -232,21 +236,33 @@ class QuartzClient:
     # ------------------------------------------------------------------
 
     def _tx(self, cmd: str) -> None:
-        """Log an outgoing command when verbose mode is on."""
         if self.verbose_logging:
             _LOGGER.debug("TX → %s", cmd.strip())
 
     def _rx(self, line: str) -> None:
-        """Log an incoming line when verbose mode is on."""
         if self.verbose_logging:
             _LOGGER.debug("RX ← %s", line)
+
+    def _on_mnemonic_received(self) -> None:
+        """Increment counter and fire the mnemonic callback when all names are in."""
+        self._mnemonics_received += 1
+        # Fire immediately on every update so the UI shows names as they trickle in.
+        # The callback is cheap (just schedules async_write_ha_state).
+        if self._mnemonic_callback:
+            self._mnemonic_callback()
+        if self._mnemonics_received == self._mnemonics_expected:
+            _LOGGER.debug(
+                "All %d mnemonics received — %d sources, %d destinations named",
+                self._mnemonics_expected,
+                len(self.source_names),
+                len(self.destination_names),
+            )
 
     # ------------------------------------------------------------------
     # Connection management
     # ------------------------------------------------------------------
 
     async def _run_loop(self) -> None:
-        """Persistent connect-and-listen loop with reconnection."""
         while self._running:
             try:
                 await self._connect()
@@ -268,7 +284,6 @@ class QuartzClient:
                 await asyncio.sleep(self.reconnect_delay)
 
     async def _connect(self) -> None:
-        """Open the TCP connection."""
         _LOGGER.debug(
             "Connecting to %s:%d (timeout %ds)", self.host, self.port, self.connect_timeout
         )
@@ -281,15 +296,12 @@ class QuartzClient:
         self.stats.reconnect_count += 1
         _LOGGER.info(
             "Connected to Evertz Quartz router at %s:%d (connection #%d)",
-            self.host,
-            self.port,
-            self.stats.reconnect_count,
+            self.host, self.port, self.stats.reconnect_count,
         )
         if self._connection_callback:
             self._connection_callback(True)
 
     async def _disconnect(self) -> None:
-        """Close the TCP connection cleanly."""
         was_connected = self._connected
         self._connected = False
         self.stats.disconnect_time = time.time()
@@ -309,7 +321,6 @@ class QuartzClient:
             self._connection_callback(False)
 
     async def _listen(self) -> None:
-        """Read lines from the router and dispatch to handlers."""
         assert self._reader is not None
         _LOGGER.debug("Listening for messages from router at %s:%d", self.host, self.port)
         last_poll = time.time()
@@ -333,7 +344,7 @@ class QuartzClient:
                 continue
 
             if not raw:
-                _LOGGER.warning("Router closed the connection (EOF received)")
+                _LOGGER.warning("Router closed the connection (EOF)")
                 break
 
             line = raw.decode(errors="replace").strip()
@@ -352,17 +363,14 @@ class QuartzClient:
         if m:
             levels_str = m.group(1)
             dest = int(m.group(2))
-            src = int(m.group(3))
+            src  = int(m.group(3))
             prev = self.routes.get(dest)
             self.routes[dest] = src
             self.stats.route_updates += 1
             if prev != src:
                 _LOGGER.debug(
                     "Route change: dest=%d  %s → %d  (levels=%s)",
-                    dest,
-                    str(prev) if prev else "?",
-                    src,
-                    levels_str or self.levels,
+                    dest, str(prev) if prev else "?", src, levels_str or self.levels,
                 )
             if self._route_callback:
                 self._route_callback(dest, src, levels_str)
@@ -371,19 +379,21 @@ class QuartzClient:
         # Destination mnemonic: .RD{dest},{name}
         m = RE_DEST_MNEMONIC.match(line)
         if m:
-            num = int(m.group(1))
+            num  = int(m.group(1))
             name = m.group(2).strip()
             self.destination_names[num] = name
             _LOGGER.debug("Destination label  %3d → %s", num, name)
+            self._on_mnemonic_received()
             return
 
         # Source mnemonic: .RT{src},{name}
         m = RE_SRC_MNEMONIC.match(line)
         if m:
-            num = int(m.group(1))
+            num  = int(m.group(1))
             name = m.group(2).strip()
             self.source_names[num] = name
             _LOGGER.debug("Source label       %3d → %s", num, name)
+            self._on_mnemonic_received()
             return
 
         # Acknowledge
@@ -393,7 +403,7 @@ class QuartzClient:
 
         # Power-on / reset
         if ".P" in line:
-            _LOGGER.info("Router power-on/reset detected — re-polling routes and mnemonics")
+            _LOGGER.info("Router power-on/reset — re-polling routes and mnemonics")
             asyncio.create_task(self.query_all_mnemonics())
             asyncio.create_task(self.query_all_routes())
             return

@@ -24,7 +24,6 @@ from .const import (
     DEFAULT_VERBOSE_LOGGING,
     DOMAIN,
 )
-from .options_flow import EvertzQuartzOptionsFlow
 from .quartz_client import QuartzClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,11 +39,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Evertz Quartz from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    listeners: list = []
+    route_listeners: list = []    # callbacks fired on .UV route updates
+    mnemonic_listeners: list = [] # callbacks fired when mnemonic names arrive
 
     def _route_callback(dest: int, src: int, levels: str) -> None:
-        for cb in listeners:
+        for cb in route_listeners:
             hass.loop.call_soon_threadsafe(cb, dest, src, levels)
+
+    def _mnemonic_callback() -> None:
+        """Fire all registered mnemonic listeners so entities re-render names."""
+        for cb in mnemonic_listeners:
+            hass.loop.call_soon_threadsafe(cb)
 
     def _connection_callback(connected: bool) -> None:
         _LOGGER.info(
@@ -52,7 +57,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "connected" if connected else "disconnected",
         )
 
-    # Merge config data + options so options always win
     opts = entry.options
     client = QuartzClient(
         host=entry.data[CONF_HOST],
@@ -61,6 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         max_destinations=entry.data[CONF_MAX_DESTINATIONS],
         levels=entry.data.get(CONF_LEVELS, "V"),
         route_callback=_route_callback,
+        mnemonic_callback=_mnemonic_callback,
         connection_callback=_connection_callback,
         verbose_logging=opts.get(CONF_VERBOSE_LOGGING, DEFAULT_VERBOSE_LOGGING),
         reconnect_delay=opts.get(CONF_RECONNECT_DELAY, DEFAULT_RECONNECT_DELAY),
@@ -69,7 +74,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,
-        "listeners": listeners,
+        "route_listeners": route_listeners,
+        "mnemonic_listeners": mnemonic_listeners,
     }
 
     await client.start()
@@ -86,7 +92,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             f"{entry.data[CONF_HOST]}:{entry.data[CONF_PORT]}"
         )
 
-    # Listen for options changes so they take effect without a reload
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     # Register the `evertz_quartz.route` service
@@ -115,7 +120,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Called whenever the user saves new options — apply them live to the client."""
+    """Apply updated options live to the running client."""
     data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     client: QuartzClient | None = data.get("client")
     if client:
@@ -125,7 +130,6 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
             reconnect_delay=opts.get(CONF_RECONNECT_DELAY),
             connect_timeout=opts.get(CONF_CONNECT_TIMEOUT),
         )
-        _LOGGER.debug("Options applied from update listener: %s", opts)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

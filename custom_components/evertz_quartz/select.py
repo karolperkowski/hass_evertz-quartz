@@ -11,9 +11,9 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CONF_LEVELS,
     CONF_MAX_DESTINATIONS,
     CONF_MAX_SOURCES,
-    CONF_LEVELS,
     DOMAIN,
 )
 
@@ -38,7 +38,7 @@ async def async_setup_entry(
 
 
 class QuartzDestinationSelect(SelectEntity):
-    """Represents a single router destination as a HA select entity."""
+    """One HA select entity = one router destination."""
 
     _attr_should_poll = False
     _attr_has_entity_name = True
@@ -54,7 +54,6 @@ class QuartzDestinationSelect(SelectEntity):
         self._client = client
         self._destination = destination
         self._max_sources = max_sources
-
         self._attr_unique_id = f"{entry.entry_id}_dest_{destination}"
 
     # ------------------------------------------------------------------
@@ -63,9 +62,11 @@ class QuartzDestinationSelect(SelectEntity):
 
     @property
     def name(self) -> str:
-        """Human-readable destination name (from mnemonic or fallback)."""
-        mnemonic = self._client.destination_names.get(self._destination)
-        return mnemonic or f"Destination {self._destination}"
+        """Destination mnemonic from router, or 'Destination N' fallback."""
+        return (
+            self._client.destination_names.get(self._destination)
+            or f"Destination {self._destination}"
+        )
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -78,12 +79,12 @@ class QuartzDestinationSelect(SelectEntity):
 
     @property
     def options(self) -> list[str]:
-        """Return the list of available sources."""
+        """Source options list — uses mnemonic names when available."""
         return [self._source_label(i) for i in range(1, self._max_sources + 1)]
 
     @property
     def current_option(self) -> str | None:
-        """Return the currently routed source."""
+        """Currently routed source for this destination."""
         src = self._client.routes.get(self._destination)
         if src is None:
             return None
@@ -101,37 +102,59 @@ class QuartzDestinationSelect(SelectEntity):
         """Route the selected source to this destination."""
         src = self._label_to_source_number(option)
         if src is None:
-            _LOGGER.warning("Unknown source option: %s", option)
+            _LOGGER.warning(
+                "Cannot route dest %d: unknown source label %r",
+                self._destination, option,
+            )
             return
         levels = self._entry.data.get(CONF_LEVELS, "V")
         await self._client.route(self._destination, src, levels)
 
     # ------------------------------------------------------------------
-    # Real-time push updates
+    # Push update listeners
     # ------------------------------------------------------------------
 
     async def async_added_to_hass(self) -> None:
-        """Register as a listener for route updates."""
-        self.hass.data[DOMAIN][self._entry.entry_id]["listeners"].append(
-            self._on_route_update
-        )
+        """Register for both route and mnemonic push updates."""
+        entry_data = self.hass.data[DOMAIN][self._entry.entry_id]
+
+        # Route updates — only the entity for the affected destination redraws
+        entry_data["route_listeners"].append(self._on_route_update)
+
+        # Mnemonic updates — ALL entities redraw because any name change
+        # can affect the options list or entity name of any destination
+        entry_data["mnemonic_listeners"].append(self._on_mnemonic_update)
 
     @callback
     def _on_route_update(self, dest: int, src: int, levels: str) -> None:
-        """Called by the client whenever the router reports a route change."""
+        """Called when the router reports a route change."""
         if dest == self._destination:
+            _LOGGER.debug(
+                "Entity dest=%d refreshed: now routed to src=%d", dest, src
+            )
             self.async_write_ha_state()
+
+    @callback
+    def _on_mnemonic_update(self) -> None:
+        """Called whenever any source or destination name arrives from the router.
+
+        This pushes state for every entity so that:
+        - The entity *name* (destination label) updates immediately
+        - The *options list* (source labels) updates immediately
+        - The *current_option* (which uses a source label) stays consistent
+        """
+        self.async_write_ha_state()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def _source_label(self, src_num: int) -> str:
-        """Return mnemonic name if available, else 'Source N'."""
+        """Source mnemonic name, or 'Source N' fallback."""
         return self._client.source_names.get(src_num) or f"Source {src_num}"
 
     def _label_to_source_number(self, label: str) -> int | None:
-        """Reverse-map a label back to a source number."""
+        """Reverse-map a display label back to a source number."""
         for num in range(1, self._max_sources + 1):
             if self._source_label(num) == label:
                 return num
