@@ -7,7 +7,7 @@ import logging
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -31,14 +31,9 @@ _LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
 _DEFAULT_LOG_LEVEL = "WARNING"
 
 
-def _device_info(entry: ConfigEntry) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, entry.entry_id)},
-        name=router_display_name(entry),
-        manufacturer="Evertz",
-        model="EQX / EQT Router",
-        configuration_url=f"http://{entry.data.get('host', '')}",
-    )
+def _device_info(entry: ConfigEntry):
+    from .helpers import device_info as _di
+    return _di(entry)
 
 
 def _current_log_level(logger_name: str = "custom_components.evertz_quartz") -> str:
@@ -113,10 +108,16 @@ class QuartzDestinationSelect(SelectEntity):
     def extra_state_attributes(self) -> dict:
         src_order = self._client.routes.get(self._order)
         return {
+            "router":            self._entry.data.get("router_name") or self._entry.data.get("host", ""),
+            "host":              self._entry.data.get("host", ""),
+            "port":              self._entry.data.get("port", ""),
+            "connected":         self._client._connected,  # noqa: SLF001
             "destination_order": self._order,
             "source_order":      src_order,
             "levels":            self._client.levels,
-            "router":            self._entry.data.get("router_name") or self._entry.data.get("host", ""),
+            "max_sources":       self._client.max_sources,
+            "max_destinations":  self._client.max_destinations,
+            "csv_loaded":        self._client.csv_loaded,
         }
 
     async def async_select_option(self, option: str) -> None:

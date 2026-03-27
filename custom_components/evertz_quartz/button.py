@@ -7,7 +7,7 @@ import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_CSV_LOADED, DOMAIN
@@ -16,14 +16,9 @@ from .helpers import router_display_name
 _LOGGER = logging.getLogger(__name__)
 
 
-def _device_info(entry: ConfigEntry) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, entry.entry_id)},
-        name=router_display_name(entry),
-        manufacturer="Evertz",
-        model="EQX / EQT Router",
-        configuration_url=f"http://{entry.data.get('host', '')}",
-    )
+def _device_info(entry: ConfigEntry):
+    from .helpers import device_info as _di
+    return _di(entry)
 
 
 async def async_setup_entry(
