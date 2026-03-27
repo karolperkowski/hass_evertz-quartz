@@ -13,22 +13,25 @@
         }
       },
       "detect": {
-        "title": "Detected Router Size",
-        "description": "Connected to {host}:{port}. The router was probed to auto-detect its size. Review and confirm — you can override if needed.",
+        "title": "Router Size",
+        "description": "Connected to **{host}:{port}**.\n\nThe router was probed to auto-detect its size (auto-detected: {detected_sources} sources, {detected_destinations} destinations). You can override the values below, or paste a profile CSV export to populate them automatically.",
         "data": {
           "max_sources": "Max Sources",
           "max_destinations": "Max Destinations",
-          "levels": "Levels"
+          "levels": "Levels",
+          "csv_profile": "Profile CSV (optional)"
         },
         "data_description": {
-          "max_sources": "Auto-detected: {detected_sources}",
-          "max_destinations": "Auto-detected: {detected_destinations}",
-          "levels": "V = video only. Append A, B, C… for audio. E.g. VABC switches video + 3 audio levels simultaneously."
+          "max_sources": "Number of sources in the Quartz profile",
+          "max_destinations": "Number of destinations in the Quartz profile",
+          "levels": "V = video. Append A, B, C… for audio. E.g. VABC routes video + 3 audio levels.",
+          "csv_profile": "Paste the contents of your EQX/MAGNUM profile export here to auto-populate source and destination counts. Leave blank to use the values above. Supported: Evertz alias export, two-column CSV, or simply '32,32'."
         }
       }
     },
     "error": {
       "cannot_connect": "Unable to connect — check the IP address and port.",
+      "csv_parse_error": "Could not parse the CSV. Check the format and try again — or leave it blank and set counts manually.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
@@ -39,22 +42,24 @@
     "step": {
       "init": {
         "title": "Evertz Quartz Router — Configure",
-        "description": "Current router: {host}  ({current_size})\n\nSize and level changes apply immediately. Changing Max Destinations will reload the integration to create or remove entities.",
+        "description": "Router: **{host}**  ({current_size})\n\nMax Sources and Levels apply immediately. Changing Max Destinations reloads the integration. {csv_format}",
         "data": {
           "max_sources": "Max Sources",
           "max_destinations": "Max Destinations",
           "levels": "Levels",
           "verbose_logging": "Verbose TCP logging",
           "reconnect_delay": "Reconnect delay (seconds)",
-          "connect_timeout": "Connection timeout (seconds)"
+          "connect_timeout": "Connection timeout (seconds)",
+          "csv_profile": "Import Profile CSV (optional)"
         },
         "data_description": {
-          "max_sources": "Number of sources the integration tracks. Applies live — no restart needed.",
-          "max_destinations": "Number of destinations (= number of select entities). Changing this will reload the integration.",
-          "levels": "Routing level(s) to switch. V = video, A/B/C = audio. E.g. VABC routes video + first 3 audio levels at once.",
-          "verbose_logging": "Log every raw Quartz TX/RX frame at DEBUG level. Useful for troubleshooting; chatty on busy routers.",
-          "reconnect_delay": "Seconds to wait before reconnecting after a connection drop.",
-          "connect_timeout": "Maximum seconds to establish the initial TCP connection."
+          "max_sources": "Applies live — no restart needed.",
+          "max_destinations": "Changing this will reload the integration.",
+          "levels": "V = video, A/B/C = audio. E.g. VABC routes video + first 3 audio levels.",
+          "verbose_logging": "Log every raw TX/RX frame at DEBUG level.",
+          "reconnect_delay": "Seconds to wait before reconnecting after a drop.",
+          "connect_timeout": "Max seconds to establish the TCP connection.",
+          "csv_profile": "Paste a profile CSV to update source/destination counts and names. Overwrites the Max Sources and Max Destinations fields above. Supported: Evertz alias export, two-column CSV, or shorthand like '32,32'."
         }
       }
     }
@@ -72,15 +77,9 @@
       }
     },
     "button": {
-      "resync_full": {
-        "name": "Resync All"
-      },
-      "resync_routes": {
-        "name": "Resync Routes"
-      },
-      "resync_names": {
-        "name": "Resync Names"
-      }
+      "resync_full":   { "name": "Resync All" },
+      "resync_routes": { "name": "Resync Routes" },
+      "resync_names":  { "name": "Resync Names" }
     }
   },
   "services": {
@@ -88,18 +87,9 @@
       "name": "Route Source to Destination",
       "description": "Routes a source to a destination on the Evertz router.",
       "fields": {
-        "destination": {
-          "name": "Destination",
-          "description": "The destination number (1-based)."
-        },
-        "source": {
-          "name": "Source",
-          "description": "The source number (1-based)."
-        },
-        "levels": {
-          "name": "Levels",
-          "description": "Optional level override (e.g. V, VA, VABC). Defaults to the configured levels."
-        }
+        "destination": { "name": "Destination", "description": "Destination number (1-based)." },
+        "source":      { "name": "Source",      "description": "Source number (1-based)." },
+        "levels":      { "name": "Levels",      "description": "Optional level override (e.g. V, VA, VABC)." }
       }
     }
   }
