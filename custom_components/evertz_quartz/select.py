@@ -180,9 +180,22 @@ class QuartzLogLevelSelect(SelectEntity):
         self._entry = entry
         self._mode = mode   # "integration" or "client"
         self._attr_unique_id = f"{entry.entry_id}_log_level_{mode}"
-        self._current = _current_log_level(
-            _CLIENT_LOGGER if mode == "client" else "custom_components.evertz_quartz"
-        )
+        # Restore persisted level from options, fall back to current logger level
+        opt_key = "client_log_level" if mode == "client" else "integration_log_level"
+        persisted = entry.options.get(opt_key)
+        if persisted and persisted in _LOG_LEVELS:
+            # Apply persisted level immediately on startup
+            numeric = getattr(logging, persisted)
+            if mode == "client":
+                logging.getLogger(_CLIENT_LOGGER).setLevel(numeric)
+            else:
+                for name in _INTEGRATION_ONLY_LOGGERS:
+                    logging.getLogger(name).setLevel(numeric)
+            self._current = persisted
+        else:
+            self._current = _current_log_level(
+                _CLIENT_LOGGER if mode == "client" else "custom_components.evertz_quartz"
+            )
 
     @property
     def name(self) -> str:
@@ -209,3 +222,8 @@ class QuartzLogLevelSelect(SelectEntity):
             _LOGGER.info("Integration log level set to %s", option)
         self._current = option
         self.async_write_ha_state()
+        # Persist to options so level survives HA restarts
+        opt_key = "client_log_level" if self._mode == "client" else "integration_log_level"
+        new_options = dict(self._entry.options)
+        new_options[opt_key] = option
+        self.hass.config_entries.async_update_entry(self._entry, options=new_options)
