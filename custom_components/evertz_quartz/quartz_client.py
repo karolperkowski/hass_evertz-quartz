@@ -328,15 +328,9 @@ class QuartzClient:
             try:
                 raw = await asyncio.wait_for(self._reader.readline(), timeout=60)
             except asyncio.TimeoutError:
-                # Keepalive
-                if self._writer:
-                    try:
-                        _LOGGER.debug("TX → .I (keepalive)")
-                        self._writer.write(b".I\r")
-                        await self._writer.drain()
-                        self.stats.messages_sent += 1
-                    except OSError:
-                        break
+                # No keepalive sent — MAGNUM holds the connection open
+                # and invalid commands trigger .E responses or disconnection.
+                # Genuine drops are handled by the reconnect loop.
                 continue
 
             if not raw:
