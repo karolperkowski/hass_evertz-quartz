@@ -45,15 +45,30 @@ RE_SRC_MNEMONIC  = re.compile(r"^\.RT(\d+),(.+)$")
 class QuartzStats:
     connect_time: float | None = None
     disconnect_time: float | None = None
+    last_rx_time: float | None = None       # timestamp of most recent received message
+    last_uv_time: float | None = None       # timestamp of most recent .UV update
+    last_sv_time: float | None = None       # timestamp of most recent .SV sent
     reconnect_count: int = 0
     messages_received: int = 0
     messages_sent: int = 0
-    route_updates: int = 0
+    route_updates: int = 0                  # .UV messages received
+    interrogate_sent: int = 0               # .I commands sent
+    interrogate_replied: int = 0            # .A replies received
+    sv_sent: int = 0                        # .SV commands sent
+    unhandled: int = 0                      # messages not matched by any parser
     errors: list = field(default_factory=list)
+    # Protocol trace: last 100 TX/RX lines with timestamps — for diagnostics
+    trace: list = field(default_factory=list)
 
     def record_error(self, msg: str) -> None:
         self.errors.append(f"{time.strftime('%H:%M:%S')} {msg}")
         self.errors = self.errors[-20:]
+
+    def record_trace(self, direction: str, line: str) -> None:
+        """direction: 'TX' or 'RX'"""
+        entry = f"{time.strftime('%H:%M:%S.') + f'{int(time.time() * 1000) % 1000:03d}'} {direction} {line}"
+        self.trace.append(entry)
+        self.trace = self.trace[-100:]
 
 
 class QuartzClient:
@@ -142,10 +157,14 @@ class QuartzClient:
         lvl = levels or self.levels
         cmd = f".SV{lvl}{str(destination).zfill(3)},{str(source).zfill(3)}\r"
         try:
-            _LOGGER.debug("TX → %s", cmd.strip())
+            cmd_stripped = cmd.strip()
+            _LOGGER.debug("TX → %s", cmd_stripped)
+            self.stats.record_trace("TX", cmd_stripped)
             self._writer.write(cmd.encode())
             await self._writer.drain()
             self.stats.messages_sent += 1
+            self.stats.sv_sent += 1
+            self.stats.last_sv_time = time.time()
 
             # Optimistic update — reflect change immediately in HA
             prev = self.routes.get(destination)
@@ -179,10 +198,13 @@ class QuartzClient:
         try:
             for order in dst_orders:
                 cmd = f".I{self.levels}{order}\r"
-                _LOGGER.debug("TX → %s", cmd.strip())
+                cmd_stripped = cmd.strip()
+                _LOGGER.debug("TX → %s", cmd_stripped)
+                self.stats.record_trace("TX", cmd_stripped)
                 self._writer.write(cmd.encode())
                 await self._writer.drain()
                 self.stats.messages_sent += 1
+                self.stats.interrogate_sent += 1
                 await asyncio.sleep(0.05)
         except OSError as err:
             _LOGGER.warning("Error sending .I interrogate: %s", err)
@@ -209,14 +231,18 @@ class QuartzClient:
         try:
             for order in range(1, self.max_destinations + 1):
                 cmd = f".RD{order}\r"
-                _LOGGER.debug("TX → %s", cmd.strip())
+                cmd_stripped = cmd.strip()
+                _LOGGER.debug("TX → %s", cmd_stripped)
+                self.stats.record_trace("TX", cmd_stripped)
                 self._writer.write(cmd.encode())
                 await self._writer.drain()
                 self.stats.messages_sent += 1
                 await asyncio.sleep(0.02)
             for order in range(1, self.max_sources + 1):
                 cmd = f".RT{order}\r"
-                _LOGGER.debug("TX → %s", cmd.strip())
+                cmd_stripped = cmd.strip()
+                _LOGGER.debug("TX → %s", cmd_stripped)
+                self.stats.record_trace("TX", cmd_stripped)
                 self._writer.write(cmd.encode())
                 await self._writer.drain()
                 self.stats.messages_sent += 1
@@ -244,11 +270,19 @@ class QuartzClient:
                 "connect_timeout": self.connect_timeout,
             },
             "stats": {
-                "messages_sent": self.stats.messages_sent,
-                "messages_received": self.stats.messages_received,
-                "route_updates": self.stats.route_updates,
-                "recent_errors": self.stats.errors,
+                "messages_sent":        self.stats.messages_sent,
+                "messages_received":    self.stats.messages_received,
+                "route_updates_uv":     self.stats.route_updates,
+                "sv_sent":              self.stats.sv_sent,
+                "interrogate_sent":     self.stats.interrogate_sent,
+                "interrogate_replied":  self.stats.interrogate_replied,
+                "unhandled_messages":   self.stats.unhandled,
+                "last_rx_time":         self.stats.last_rx_time,
+                "last_uv_time":         self.stats.last_uv_time,
+                "last_sv_time":         self.stats.last_sv_time,
+                "recent_errors":        self.stats.errors,
             },
+            "protocol_trace": self.stats.trace,
             "routes": {str(k): v for k, v in sorted(self.routes.items())},
             "source_names": {str(k): v for k, v in sorted(self.source_names.items())},
             "destination_names": {str(k): v for k, v in sorted(self.destination_names.items())},
@@ -329,14 +363,19 @@ class QuartzClient:
                     break
             except asyncio.TimeoutError:
                 # 60s of silence — connection likely still alive (MAGNUM holds it open)
+                idle = time.time() - (self.stats.last_rx_time or self.stats.connect_time or time.time())
+                _LOGGER.debug("60s idle (%.0fs since last RX) — sending keepalive probe", idle)
                 # but check by attempting a known-safe query
                 if self._writer:
                     try:
                         cmd = f".I{self.levels}1\r"
-                        _LOGGER.debug("TX → %s (keepalive probe)", cmd.strip())
+                        cmd_stripped = cmd.strip()
+                        _LOGGER.debug("TX → %s (keepalive probe, %ds silence)", cmd_stripped, 60)
+                        self.stats.record_trace("TX", f"{cmd_stripped} [keepalive]")
                         self._writer.write(cmd.encode())
                         await self._writer.drain()
                         self.stats.messages_sent += 1
+                        self.stats.interrogate_sent += 1
                     except OSError:
                         break
                 continue
@@ -349,7 +388,9 @@ class QuartzClient:
                 continue
 
             _LOGGER.debug("RX ← %r", line)
+            self.stats.record_trace("RX", line)
             self.stats.messages_received += 1
+            self.stats.last_rx_time = time.time()
             self._dispatch(line)
 
     def _dispatch(self, line: str) -> None:
@@ -365,12 +406,18 @@ class QuartzClient:
             prev        = self.routes.get(dest_order)
             self.routes[dest_order] = src_order
             self.stats.route_updates += 1
+            dest_name = self.destination_names.get(dest_order, f"Dest {dest_order}")
+            src_name  = self.source_names.get(src_order,  f"Src {src_order}")
+            self.stats.last_uv_time = time.time()
             if prev != src_order:
-                dest_name = self.destination_names.get(dest_order, f"Dest {dest_order}")
-                src_name  = self.source_names.get(src_order,  f"Src {src_order}")
                 _LOGGER.debug(
-                    "Route update: %s (Order %d) → %s (Order %d)",
+                    "Route update (.UV): %s (Order %d) → %s (Order %d)",
                     dest_name, dest_order, src_name, src_order,
+                )
+            else:
+                _LOGGER.debug(
+                    "Route update (.UV) no change: %s still → %s (Order %d)",
+                    dest_name, src_name, src_order,
                 )
             if self._route_callback:
                 self._route_callback(dest_order, src_order, levels_str)
@@ -383,13 +430,21 @@ class QuartzClient:
             src_order  = int(m.group(3))
             prev = self.routes.get(dest_order)
             self.routes[dest_order] = src_order
+            self.stats.interrogate_replied += 1
+            dest_name = self.destination_names.get(dest_order, f"Dest {dest_order}")
+            src_name  = self.source_names.get(src_order, f"Src {src_order}")
             if prev != src_order:
                 _LOGGER.debug(
-                    "Route sync (.I reply): dest Order=%d → src Order=%d",
-                    dest_order, src_order,
+                    "Route sync (.I reply): %s (Order %d) → %s (Order %d) [was %s]",
+                    dest_name, dest_order, src_name, src_order, prev,
                 )
                 if self._route_callback:
                     self._route_callback(dest_order, src_order, m.group(1))
+            else:
+                _LOGGER.debug(
+                    "Route confirmed (.I reply): %s → %s (Order %d, no change)",
+                    dest_name, src_name, src_order,
+                )
             return
 
         # Destination mnemonic (non-MAGNUM routers): .RD{order},{name}
@@ -413,7 +468,7 @@ class QuartzClient:
             return
 
         if line == QUARTZ_ACK:
-            _LOGGER.debug("ACK")
+            _LOGGER.debug("ACK (.A) received")
             return
 
         if ".P" in line:
@@ -421,7 +476,10 @@ class QuartzClient:
             asyncio.create_task(self.query_all_routes())
             return
 
-        _LOGGER.debug("Unhandled: %r", line)
+        self.stats.unhandled += 1
+        # Log raw bytes for unhandled messages so unexpected prefixes/encodings are visible
+        raw_hex = line.encode().hex()
+        _LOGGER.debug("Unhandled: %r (hex: %s)", line, raw_hex)
 
     def _on_mnemonic_received(self) -> None:
         self._mnemonics_received += 1
