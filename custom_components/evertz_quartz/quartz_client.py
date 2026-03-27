@@ -36,6 +36,8 @@ _LOGGER = logging.getLogger(__name__)
 RE_ROUTE_UPDATE = re.compile(r"^\.UV([A-Za-z]*)(\d+),(\d+)$")
 # .A[levels][dest_order],[src_order]  — .I interrogate response
 RE_ROUTE_REPLY  = re.compile(r"^\.A([A-Za-z]*)(\d+),(\d+)$")
+# .BA{dest},{value}  — lock state update (255=locked, 0=unlocked)
+RE_LOCK_UPDATE  = re.compile(r"^\.BA(\d+),(\d+)$")
 # Mnemonic responses (only used on non-MAGNUM routers)
 RE_DEST_MNEMONIC = re.compile(r"^\.RD(\d+),(.+)$")
 RE_SRC_MNEMONIC  = re.compile(r"^\.RT(\d+),(.+)$")
@@ -87,6 +89,7 @@ class QuartzClient:
         mnemonic_callback: Callable[[], None] | None = None,
         connection_callback: Callable[[bool], None] | None = None,
         notify_callback: Callable[[str, int], None] | None = None,
+        lock_callback: Callable[[int, int], None] | None = None,
         reconnect_delay: int = DEFAULT_RECONNECT_DELAY,
         connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
     ) -> None:
@@ -127,8 +130,11 @@ class QuartzClient:
         self._mnemonic_callback = mnemonic_callback
         self._connection_callback = connection_callback
         self._notify_callback = notify_callback
+        self._lock_callback = lock_callback
         # Tracks (kind, order) pairs already warned — prevents log/notification spam
         self._warned_orders: set[tuple[str, int]] = set()
+        # Lock state: dest_order → lock_value (0=unlocked, 255=locked, other=partial)
+        self.locks: dict[int, int] = {}
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._listen_task: asyncio.Task | None = None
@@ -198,6 +204,49 @@ class QuartzClient:
             return True
         except (OSError, ConnectionResetError) as err:
             msg = f"Route command failed: {err}"
+            self._log.error(msg)
+            self.stats.record_error(msg)
+            await self._disconnect()
+            return False
+
+    async def lock_destination(self, destination: int) -> bool:
+        """Send .BL{dest} to lock a destination."""
+        return await self._send_lock_cmd(f".BL{destination}\r", destination, "lock")
+
+    async def unlock_destination(self, destination: int) -> bool:
+        """Send .BU{dest} to unlock a destination."""
+        return await self._send_lock_cmd(f".BU{destination}\r", destination, "unlock")
+
+    async def query_lock_state(self, destination: int) -> None:
+        """Send .BI{dest} to interrogate current lock state."""
+        if not self._connected or self._writer is None:
+            return
+        cmd = f".BI{destination}\r"
+        try:
+            self._log.debug("%sTX → %s (lock interrogate)", self._pfx, cmd.strip())
+            self.stats.record_trace("TX", cmd.strip())
+            self._writer.write(cmd.encode())
+            await self._writer.drain()
+            self.stats.messages_sent += 1
+        except OSError as err:
+            self._log.warning("%sLock interrogate failed: %s", self._pfx, err)
+
+    async def _send_lock_cmd(self, cmd: str, destination: int, action: str) -> bool:
+        if not self._connected or self._writer is None:
+            msg = f"Cannot {action} dest {destination}: not connected"
+            self._log.warning(msg)
+            self.stats.record_error(msg)
+            return False
+        try:
+            cmd_stripped = cmd.strip()
+            self._log.debug("%sTX → %s", self._pfx, cmd_stripped)
+            self.stats.record_trace("TX", cmd_stripped)
+            self._writer.write(cmd.encode())
+            await self._writer.drain()
+            self.stats.messages_sent += 1
+            return True
+        except (OSError, ConnectionResetError) as err:
+            msg = f"Lock command failed: {err}"
             self._log.error(msg)
             self.stats.record_error(msg)
             await self._disconnect()
@@ -303,6 +352,7 @@ class QuartzClient:
             },
             "protocol_trace": self.stats.trace,
             "routes": {str(k): v for k, v in sorted(self.routes.items())},
+            "locks":  {str(k): v for k, v in sorted(self.locks.items())},
             "source_names": {str(k): v for k, v in sorted(self.source_names.items())},
             "destination_names": {str(k): v for k, v in sorted(self.destination_names.items())},
             "source_namespaces": {str(k): v for k, v in sorted(self.source_namespaces.items())},
@@ -316,6 +366,7 @@ class QuartzClient:
             try:
                 await self._connect()
                 await self.query_all_routes()
+                await self._query_all_locks()
                 if not self.csv_loaded:
                     await self.query_all_mnemonics()
                 await self._listen()
@@ -346,6 +397,12 @@ class QuartzClient:
         )
         if self._connection_callback:
             self._connection_callback(True)
+
+    async def _query_all_locks(self) -> None:
+        """Interrogate lock state for all configured destinations on connect."""
+        for order in range(1, self.max_destinations + 1):
+            await self.query_lock_state(order)
+            await asyncio.sleep(0.05)
 
     async def _disconnect(self) -> None:
         was_connected = self._connected
@@ -493,6 +550,31 @@ class QuartzClient:
 
         if line == QUARTZ_ACK:
             self._log.debug("%sACK (.A) received", self._pfx)
+            return
+
+        # Lock state update: .BA{dest},{value}
+        m = RE_LOCK_UPDATE.match(line)
+        if m:
+            dest_order = int(m.group(1))
+            lock_value = int(m.group(2))
+            prev       = self.locks.get(dest_order)
+            self.locks[dest_order] = lock_value
+            dest_name  = self.destination_names.get(dest_order, f"Dest {dest_order}")
+            locked     = lock_value > 0
+            if prev != lock_value:
+                self._log.info(
+                    "%sLock state: %s (Order %d) → %s (value=%d)",
+                    self._pfx, dest_name, dest_order,
+                    "LOCKED" if locked else "UNLOCKED", lock_value,
+                )
+            else:
+                self._log.debug(
+                    "%sLock confirmed: %s still %s (value=%d)",
+                    self._pfx, dest_name,
+                    "LOCKED" if locked else "UNLOCKED", lock_value,
+                )
+            if self._lock_callback:
+                self._lock_callback(dest_order, lock_value)
             return
 
         if ".P" in line:

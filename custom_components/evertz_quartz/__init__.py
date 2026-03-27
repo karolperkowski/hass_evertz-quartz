@@ -31,7 +31,7 @@ from .quartz_client import QuartzClient
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SELECT, Platform.BUTTON, Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SELECT, Platform.BUTTON, Platform.BINARY_SENSOR, Platform.SENSOR, Platform.LOCK]
 
 ATTR_DESTINATION  = "destination"
 ATTR_SOURCE       = "source"
@@ -49,6 +49,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     mnemonic_listeners: list = []
     mismatch_listeners: list = []
     connection_listeners: list = []   # notified on connect/disconnect
+    lock_listeners: list = []         # notified on .BA lock state change
     mismatch_orders: set = set()   # (kind, order) pairs seen out-of-range this session
 
     def _route_callback(dest: int, src: int, levels: str) -> None:
@@ -64,6 +65,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Evertz Quartz [%s] %s", name, "connected" if connected else "disconnected")
         for cb in connection_listeners:
             hass.loop.call_soon_threadsafe(cb)
+
+    def _lock_callback(dest_order: int, lock_value: int) -> None:
+        """Called by client when a .BA lock state message is received."""
+        for cb in lock_listeners:
+            hass.loop.call_soon_threadsafe(cb, dest_order, lock_value)
 
     def _notify_callback(kind: str, order: int) -> None:
         """Called by client when an out-of-range Order is received."""
@@ -129,6 +135,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         mnemonic_callback=_mnemonic_callback,
         connection_callback=_connection_callback,
         notify_callback=_notify_callback,
+        lock_callback=_lock_callback,
         reconnect_delay=effective(entry, CONF_RECONNECT_DELAY,  DEFAULT_RECONNECT_DELAY),
         connect_timeout=effective(entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT),
     )
@@ -168,6 +175,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "mnemonic_listeners": mnemonic_listeners,
         "mismatch_listeners": mismatch_listeners,
         "connection_listeners": connection_listeners,
+        "lock_listeners": lock_listeners,
         "mismatch_orders": mismatch_orders,
     }
 
@@ -239,6 +247,14 @@ def _register_route_service(hass: HomeAssistant) -> None:
                 raise ServiceValidationError(
                     f"Multiple routers configured ({names}). Specify device_id or router_name."
                 )
+
+        # Lock check — block routing to locked destinations
+        if client.locks.get(destination, 0) > 0:
+            dest_name = client.destination_names.get(destination, f"Dest {destination}")
+            raise ServiceValidationError(
+                f"Route blocked: destination {dest_name!r} (Order {destination}) is locked. "
+                "Unlock it before routing."
+            )
 
         # Namespace check — block cross-namespace routes from service calls too
         dest_ns = client.destination_namespaces.get(destination)

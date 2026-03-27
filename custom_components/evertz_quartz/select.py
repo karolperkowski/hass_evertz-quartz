@@ -125,6 +125,7 @@ class QuartzDestinationSelect(SelectEntity):
         src_order = self._client.routes.get(self._order)
         dest_ns   = self._client.destination_namespaces.get(self._order)
         src_ns    = self._client.source_namespaces.get(src_order) if src_order else None
+        lock_val = self._client.locks.get(self._order, 0)
         return {
             "router":            self._entry.data.get("router_name") or self._entry.data.get("host", ""),
             "host":              self._entry.data.get("host", ""),
@@ -135,6 +136,8 @@ class QuartzDestinationSelect(SelectEntity):
             "source_order":      src_order,
             "source_namespace":  src_ns,
             "namespace_filter":  dest_ns or "none",
+            "locked":            lock_val > 0,
+            "lock_value":        lock_val,
             "levels":            self._client.levels,
             "max_sources":       self._client.max_sources,
             "max_destinations":  self._client.max_destinations,
@@ -154,6 +157,29 @@ class QuartzDestinationSelect(SelectEntity):
                 self._entry.data.get("router_name", ""), self._order, option,
             )
             return
+
+        # ── Lock check ───────────────────────────────────────────────────────
+        if self._client.locks.get(self._order, 0) > 0:
+            rname     = self._entry.data.get("router_name", self._entry.data.get("host", ""))
+            dest_name = self._client.destination_names.get(self._order, f"Dest {self._order}")
+            _LOGGER.warning(
+                "[%s] Route blocked: destination %s (Order %d) is locked",
+                rname, dest_name, self._order,
+            )
+            self.hass.async_create_task(
+                self.hass.services.async_call(
+                    "persistent_notification", "create", {
+                        "notification_id": f"evertz_quartz_{self._entry.entry_id}_locked_{self._order}",
+                        "title": f"Evertz Quartz [{rname}] — Route Blocked: Destination Locked",
+                        "message": (
+                            f"**{dest_name}** is currently **locked**.\n\n"
+                            "Routes to this destination are blocked until it is unlocked.\n\n"
+                            f"Use the **{dest_name} Lock** entity on the device card to unlock it."
+                        ),
+                    }
+                )
+            )
+            return  # Do NOT route
 
         # ── Namespace check ──────────────────────────────────────────────────
         dest_ns = self._client.destination_namespaces.get(self._order)

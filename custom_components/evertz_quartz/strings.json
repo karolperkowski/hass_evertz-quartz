@@ -137,6 +137,16 @@
       "profile_summary": {
         "name": "Profile"
       }
+    },
+    "lock": {
+      "destination_lock": {
+        "name": "{destination_name} Lock",
+        "state": {
+          "locked": "Locked",
+          "unlocking": "Unlocking",
+          "locking": "Locking"
+        }
+      }
     }
   },
   "services": {
