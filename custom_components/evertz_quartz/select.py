@@ -12,7 +12,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     CONF_MAX_DESTINATIONS,
-            DOMAIN,
+    DEFAULT_MAX_DESTINATIONS,
+    DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
