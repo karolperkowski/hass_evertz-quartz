@@ -44,7 +44,7 @@
     "step": {
       "init": {
         "title": "Configure — {router_name}",
-        "description": "**Connection settings** for {router_name}.\n\nThese apply immediately without a restart. Click Next to review or update the router profile (sources, destinations, CSV).",
+        "description": "**Connection settings** for {router_name}.\n\nThese apply immediately without a restart.\n\nPress **Next** to review or update the router profile (sources, destinations, CSV).",
         "data": {
           "levels": "Levels",
           "reconnect_delay": "Reconnect delay (seconds)",

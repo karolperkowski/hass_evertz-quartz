@@ -179,6 +179,7 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                 vol.Required(CONF_CONNECT_TIMEOUT, default=cur_timeout):  vol.All(int, vol.Range(min=3, max=60)),
             }),
             description_placeholders={"router_name": rname},
+            last_step=False,
         )
 
     # ── Step 2: Profile ───────────────────────────────────────────────────
