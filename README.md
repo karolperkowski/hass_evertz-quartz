@@ -143,6 +143,68 @@ Go to **Settings → Devices & Services → Evertz Quartz → Configure** and us
 
 Press the **Clear CSV Profile** button on the device card to revert to querying the router directly for names. On MAGNUM this will result in generic names since MAGNUM does not respond to Quartz mnemonic queries.
 
+
+---
+
+## Lovelace Card (`custom:evertz-quartz-card`)
+
+A purpose-built card for controlling the router directly from your dashboard — no third-party HACS frontend dependencies required.
+
+### Installing the card
+
+**Step 1** — Add the JS resource to HA:
+
+Go to **Settings → Dashboards → Resources** (three-dot menu) → **Add Resource**:
+
+```
+URL:  /hacsfiles/hass_evertz-quartz/evertz-quartz-card.js
+Type: JavaScript Module
+```
+
+Or manually copy `dist/evertz-quartz-card.js` to your `/config/www/` folder and use `/local/evertz-quartz-card.js` as the URL.
+
+**Step 2** — Add to your dashboard:
+
+```yaml
+type: custom:evertz-quartz-card
+title: CR47
+destinations:
+  - entity: select.cr47_qc4720
+    name: QC4720
+```
+
+### Card config options
+
+| Option | Required | Description |
+|---|---|---|
+| `title` | No | Router name shown in header. Defaults to `Quartz Router` |
+| `destinations` | **Yes** | List of `{entity, name}` destination select entities |
+| `connection_entity` | No | `binary_sensor` entity to show connection status |
+| `categories` | No | Custom source grouping rules (regex strings) |
+
+### Multiple destinations
+
+```yaml
+type: custom:evertz-quartz-card
+title: CR47
+destinations:
+  - entity: select.cr47_qc4720
+    name: QC4720
+  - entity: select.cr47_mon_a
+    name: MON-A
+  - entity: select.cr47_mon_b
+    name: MON-B
+```
+
+### Card features
+
+- **Favourites view** — pin frequently-used sources with ★, search the full 1164-source list below
+- **Matrix view** — destinations as columns, sources as rows, grouped by category
+- **Confirm before take** — confirm dialog prevents accidental route changes
+- **Connection status** — live badge in header
+- **Last take log** — shows destination, source and timestamp of last route change
+- **Persistent favourites** — saved to browser localStorage per router
+
 ---
 
 ## Debug & Diagnostics
