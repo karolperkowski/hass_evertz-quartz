@@ -21,6 +21,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_CSV_LOADED,
     CONF_LEVELS,
     CONF_MAX_DESTINATIONS,
     CONF_MAX_SOURCES,
@@ -173,18 +174,21 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 # Serialize port maps with string keys for JSON storage
+                csv_was_uploaded = bool(self._source_port_map or self._destination_port_map)
                 data = {
-                    CONF_HOST:             self._host,
-                    CONF_PORT:             self._port,
-                    CONF_NAME:             self._router_name,
-                    CONF_MAX_SOURCES:      user_input.get(CONF_MAX_SOURCES, self._max_sources),
-                    CONF_MAX_DESTINATIONS: user_input.get(CONF_MAX_DESTINATIONS, self._max_destinations),
-                    CONF_LEVELS:           user_input.get(CONF_LEVELS, self._levels),
-                    # Port maps persist — encode Order↔Port relationship from CSV
-                    # Names are transient — pre-loaded into client memory only,
-                    # then overridden by live .RT/.RD responses from the router
-                    "source_port_map":     {str(k): v for k, v in self._source_port_map.items()},
-                    "destination_port_map":{str(k): v for k, v in self._destination_port_map.items()},
+                    CONF_HOST:              self._host,
+                    CONF_PORT:              self._port,
+                    CONF_NAME:              self._router_name,
+                    CONF_MAX_SOURCES:       user_input.get(CONF_MAX_SOURCES, self._max_sources),
+                    CONF_MAX_DESTINATIONS:  user_input.get(CONF_MAX_DESTINATIONS, self._max_destinations),
+                    CONF_LEVELS:            user_input.get(CONF_LEVELS, self._levels),
+                    CONF_CSV_LOADED:        csv_was_uploaded,
+                    # Port maps: persist Order↔Port mapping from CSV
+                    "source_port_map":      {str(k): v for k, v in self._source_port_map.items()},
+                    "destination_port_map": {str(k): v for k, v in self._destination_port_map.items()},
+                    # Names: persisted only when CSV loaded — router is authoritative otherwise
+                    "source_names":         {str(k): v for k, v in self._source_names.items()} if csv_was_uploaded else {},
+                    "destination_names":    {str(k): v for k, v in self._destination_names.items()} if csv_was_uploaded else {},
                 }
                 return self.async_create_entry(title=self._router_name, data=data)
 

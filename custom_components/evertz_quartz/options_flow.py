@@ -16,13 +16,16 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_CLIENT_VERBOSE,
     CONF_CONNECT_TIMEOUT,
+    CONF_CSV_LOADED,
     CONF_LEVELS,
     CONF_MAX_DESTINATIONS,
     CONF_MAX_SOURCES,
     CONF_NAME,
     CONF_RECONNECT_DELAY,
     CONF_VERBOSE_LOGGING,
+    DEFAULT_CLIENT_VERBOSE,
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_LEVELS,
     DEFAULT_MAX_DESTINATIONS,
@@ -161,31 +164,35 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         return self._show_init_form(errors)
 
     def _show_init_form(self, errors: dict) -> FlowResult:
-        cur_max_src = _effective(self._entry, CONF_MAX_SOURCES,     DEFAULT_MAX_SOURCES)
-        cur_max_dst = _effective(self._entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
-        cur_levels  = _effective(self._entry, CONF_LEVELS,           DEFAULT_LEVELS)
-        cur_verbose = _effective(self._entry, CONF_VERBOSE_LOGGING,  DEFAULT_VERBOSE_LOGGING)
-        cur_recon   = _effective(self._entry, CONF_RECONNECT_DELAY,  DEFAULT_RECONNECT_DELAY)
-        cur_timeout = _effective(self._entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT)
-        router_name = self._entry.data.get(CONF_NAME) or self._entry.data.get("host", "")
+        cur_max_src     = _effective(self._entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES)
+        cur_max_dst     = _effective(self._entry, CONF_MAX_DESTINATIONS,  DEFAULT_MAX_DESTINATIONS)
+        cur_levels      = _effective(self._entry, CONF_LEVELS,            DEFAULT_LEVELS)
+        cur_verbose     = _effective(self._entry, CONF_VERBOSE_LOGGING,   DEFAULT_VERBOSE_LOGGING)
+        cur_cli_verbose = _effective(self._entry, CONF_CLIENT_VERBOSE,    DEFAULT_CLIENT_VERBOSE)
+        cur_recon       = _effective(self._entry, CONF_RECONNECT_DELAY,   DEFAULT_RECONNECT_DELAY)
+        cur_timeout     = _effective(self._entry, CONF_CONNECT_TIMEOUT,   DEFAULT_CONNECT_TIMEOUT)
+        router_name     = self._entry.data.get(CONF_NAME) or self._entry.data.get("host", "")
+        csv_status      = "CSV profile loaded" if self._entry.data.get(CONF_CSV_LOADED) else "No CSV — using router names"
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
-                vol.Required(CONF_MAX_SOURCES,      default=cur_max_src):  vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
-                vol.Required(CONF_MAX_DESTINATIONS, default=cur_max_dst):  vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
-                vol.Required(CONF_LEVELS,           default=cur_levels):   str,
-                vol.Required(CONF_VERBOSE_LOGGING,  default=cur_verbose):  bool,
-                vol.Required(CONF_RECONNECT_DELAY,  default=cur_recon):    vol.All(int, vol.Range(min=1, max=300)),
-                vol.Required(CONF_CONNECT_TIMEOUT,  default=cur_timeout):  vol.All(int, vol.Range(min=3, max=60)),
+                vol.Required(CONF_MAX_SOURCES,      default=cur_max_src):      vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
+                vol.Required(CONF_MAX_DESTINATIONS, default=cur_max_dst):      vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
+                vol.Required(CONF_LEVELS,           default=cur_levels):       str,
+                vol.Required(CONF_VERBOSE_LOGGING,  default=cur_verbose):      bool,
+                vol.Required(CONF_CLIENT_VERBOSE,   default=cur_cli_verbose):  bool,
+                vol.Required(CONF_RECONNECT_DELAY,  default=cur_recon):        vol.All(int, vol.Range(min=1, max=300)),
+                vol.Required(CONF_CONNECT_TIMEOUT,  default=cur_timeout):      vol.All(int, vol.Range(min=3, max=60)),
                 vol.Optional(CONF_CSV_UPLOAD): FileSelector(
                     FileSelectorConfig(accept=".csv,text/csv")
                 ),
             }),
             errors=errors,
             description_placeholders={
-                "router_name":   router_name,
-                "current_size":  f"{cur_max_src} src × {cur_max_dst} dst",
+                "router_name":  router_name,
+                "current_size": f"{cur_max_src} src x {cur_max_dst} dst",
+                "csv_status":   csv_status,
             },
         )
 
@@ -314,16 +321,18 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
 
         # ── Persist names into entry.data via hass.config_entries ────────
         # Names go into data (not options) so they survive options resets
-        # Port maps persist (encode Order↔Port from CSV); names are transient
-        if source_port_map or destination_port_map:
+        # Persist port maps + names when CSV provided; update csv_loaded flag
+        if source_port_map or destination_port_map or source_names or destination_names:
             new_data = dict(self._entry.data)
             if source_port_map:
                 new_data["source_port_map"] = {str(k): v for k, v in source_port_map.items()}
             if destination_port_map:
                 new_data["destination_port_map"] = {str(k): v for k, v in destination_port_map.items()}
-            # Also remove any stale stored names from previous versions
-            new_data.pop("source_names", None)
-            new_data.pop("destination_names", None)
+            if source_names:
+                new_data["source_names"] = {str(k): v for k, v in source_names.items()}
+            if destination_names:
+                new_data["destination_names"] = {str(k): v for k, v in destination_names.items()}
+            new_data[CONF_CSV_LOADED] = True
             self.hass.config_entries.async_update_entry(self._entry, data=new_data)
 
         result = self.async_create_entry(title="", data=settings)

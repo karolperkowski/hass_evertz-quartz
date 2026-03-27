@@ -15,7 +15,7 @@
         }
       },
       "profile": {
-        "title": "Router Profile — {router_name}",
+        "title": "Router Profile \u2014 {router_name}",
         "description": "Set the number of sources and destinations. Upload your MAGNUM profile_availability CSV to populate these automatically.\n\n{csv_warnings}",
         "data": {
           "max_sources": "Max Sources",
@@ -26,13 +26,13 @@
         "data_description": {
           "max_sources": "Highest source port number in your profile (sources and destinations do not need to be equal).",
           "max_destinations": "Highest destination port number in your profile.",
-          "levels": "V = video only. Append A, B, C… for audio. E.g. VABC routes video + first 3 audio levels.",
-          "csv_upload": "Upload your MAGNUM profile_availability.csv export to auto-populate counts and names. Supports partial exports — a sources-only file will only update the source count."
+          "levels": "V = video only. Append A, B, C\u2026 for audio. E.g. VABC routes video + first 3 audio levels.",
+          "csv_upload": "Upload your MAGNUM profile_availability.csv export to auto-populate counts and names. Supports partial exports \u2014 a sources-only file will only update the source count."
         }
       }
     },
     "error": {
-      "cannot_connect": "Unable to connect — check the IP address and port.",
+      "cannot_connect": "Unable to connect \u2014 check the IP address and port.",
       "csv_parse_error": "File could not be parsed. Check the format and try again, or set counts manually.",
       "unknown": "An unexpected error occurred."
     },
@@ -43,8 +43,8 @@
   "options": {
     "step": {
       "init": {
-        "title": "Configure — {router_name}",
-        "description": "Current size: {current_size}\n\nMax Sources and Levels apply immediately. Changing Max Destinations will reload the integration. Upload a CSV to update counts and names.",
+        "title": "Configure \u2014 {router_name}",
+        "description": "Router: **{router_name}** ({current_size})\nProfile: {csv_status}\n\nSize and level changes apply immediately. Changing Max Destinations reloads the integration.",
         "data": {
           "max_sources": "Max Sources",
           "max_destinations": "Max Destinations",
@@ -52,16 +52,18 @@
           "verbose_logging": "Verbose TCP logging",
           "reconnect_delay": "Reconnect delay (seconds)",
           "connect_timeout": "Connection timeout (seconds)",
-          "csv_upload": "Re-import Profile CSV (optional)"
+          "csv_upload": "Re-import Profile CSV (optional)",
+          "client_verbose": "Client verbose logging (raw TCP frames)"
         },
         "data_description": {
-          "max_sources": "Applies live — no restart needed.",
+          "max_sources": "Applies live \u2014 no restart needed.",
           "max_destinations": "Changing this will reload the integration.",
           "levels": "V = video, A/B/C = audio. E.g. VABC routes video + first 3 audio levels.",
           "verbose_logging": "Log every raw TX/RX Quartz frame at DEBUG level.",
           "reconnect_delay": "Seconds to wait before reconnecting after a drop.",
           "connect_timeout": "Max seconds to establish the TCP connection.",
-          "csv_upload": "Upload a new profile_availability.csv to update counts and names. You will be shown a summary of changes before they are applied."
+          "csv_upload": "Upload a new profile_availability.csv to update counts and names. You will be shown a summary of changes before they are applied.",
+          "client_verbose": "Log every raw .SV/.UV/.RT frame in quartz_client at DEBUG level. More detailed than the integration log level."
         }
       },
       "confirm_csv": {
@@ -78,17 +80,35 @@
       "log_level": {
         "name": "Log Level",
         "state": {
-          "DEBUG":   "Debug",
-          "INFO":    "Info",
+          "DEBUG": "Debug",
+          "INFO": "Info",
           "WARNING": "Warning",
-          "ERROR":   "Error"
+          "ERROR": "Error"
+        }
+      },
+      "log_level_client": {
+        "name": "Client Log Level",
+        "state": {
+          "DEBUG": "Debug",
+          "INFO": "Info",
+          "WARNING": "Warning",
+          "ERROR": "Error"
         }
       }
     },
     "button": {
-      "resync_full":   { "name": "Resync All" },
-      "resync_routes": { "name": "Resync Routes" },
-      "resync_names":  { "name": "Resync Names" }
+      "resync_full": {
+        "name": "Resync All"
+      },
+      "resync_routes": {
+        "name": "Resync Routes"
+      },
+      "resync_names": {
+        "name": "Resync Names"
+      },
+      "clear_csv": {
+        "name": "Clear CSV Profile"
+      }
     }
   },
   "services": {
@@ -98,7 +118,7 @@
       "fields": {
         "device_id": {
           "name": "Device ID",
-          "description": "HA device registry ID of the router. Find it in Settings → Devices & Services → your router → device info."
+          "description": "HA device registry ID of the router. Find it in Settings \u2192 Devices & Services \u2192 your router \u2192 device info."
         },
         "router_name": {
           "name": "Router Name",

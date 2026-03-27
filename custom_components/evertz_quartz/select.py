@@ -49,8 +49,8 @@ def _device_info(entry: ConfigEntry) -> DeviceInfo:
     )
 
 
-def _current_log_level() -> str:
-    logger = logging.getLogger("custom_components.evertz_quartz")
+def _current_log_level(logger_name: str = "custom_components.evertz_quartz") -> str:
+    logger = logging.getLogger(logger_name)
     name = logging.getLevelName(logger.level)
     return name if name in _LOG_LEVELS else _DEFAULT_LOG_LEVEL
 
@@ -80,7 +80,8 @@ async def async_setup_entry(
         )
         for dest in range(1, max_destinations + 1)
     ]
-    entities.append(QuartzLogLevelSelect(entry))
+    entities.append(QuartzLogLevelSelect(entry, "integration"))
+    entities.append(QuartzLogLevelSelect(entry, "client"))
     async_add_entities(entities, update_before_add=True)
 
 
@@ -204,8 +205,23 @@ class QuartzDestinationSelect(SelectEntity):
         return port  # identity fallback when no map
 
 
+# Loggers controlled by each entity
+_INTEGRATION_ONLY_LOGGERS = [
+    "custom_components.evertz_quartz",
+    "custom_components.evertz_quartz.select",
+    "custom_components.evertz_quartz.button",
+    "custom_components.evertz_quartz.config_flow",
+    "custom_components.evertz_quartz.options_flow",
+]
+_CLIENT_LOGGER = "custom_components.evertz_quartz.quartz_client"
+
+
 class QuartzLogLevelSelect(SelectEntity):
-    """Integration log level control — diagnostic entity."""
+    """
+    Log level control — two instances:
+      mode="integration"  controls all loggers except quartz_client
+      mode="client"       controls quartz_client only (TCP protocol detail)
+    """
 
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -213,14 +229,17 @@ class QuartzLogLevelSelect(SelectEntity):
     _attr_options = _LOG_LEVELS
     _attr_should_poll = False
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, mode: str) -> None:
         self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_log_level"
-        self._current = _current_log_level()
+        self._mode = mode   # "integration" or "client"
+        self._attr_unique_id = f"{entry.entry_id}_log_level_{mode}"
+        self._current = _current_log_level(
+            _CLIENT_LOGGER if mode == "client" else "custom_components.evertz_quartz"
+        )
 
     @property
     def name(self) -> str:
-        return "Log Level"
+        return "Client Log Level" if self._mode == "client" else "Log Level"
 
     @property
     def current_option(self) -> str:
@@ -234,8 +253,12 @@ class QuartzLogLevelSelect(SelectEntity):
         if option not in _LOG_LEVELS:
             return
         numeric = getattr(logging, option)
-        for name in _INTEGRATION_LOGGERS:
-            logging.getLogger(name).setLevel(numeric)
+        if self._mode == "client":
+            logging.getLogger(_CLIENT_LOGGER).setLevel(numeric)
+            _LOGGER.info("Client (quartz_client) log level set to %s", option)
+        else:
+            for name in _INTEGRATION_ONLY_LOGGERS:
+                logging.getLogger(name).setLevel(numeric)
+            _LOGGER.info("Integration log level set to %s", option)
         self._current = option
         self.async_write_ha_state()
-        _LOGGER.info("Log level set to %s", option)
