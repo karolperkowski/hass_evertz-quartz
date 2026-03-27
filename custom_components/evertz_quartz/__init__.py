@@ -66,16 +66,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     csv_loaded   = entry.data.get(CONF_CSV_LOADED, False)
 
     if src_port_map:
-        _LOGGER.debug("Loaded source port map (%d entries)", len(src_port_map))
+        _LOGGER.debug("[%s] Loaded source port map (%d entries)", rname, len(src_port_map))
     if dst_port_map:
-        _LOGGER.debug("Loaded destination port map (%d entries)", len(dst_port_map))
+        _LOGGER.debug("[%s] Loaded destination port map (%d entries)", rname, len(dst_port_map))
 
+    rname = router_display_name(entry)
     client = QuartzClient(
         host=entry.data[CONF_HOST],
         port=entry.data[CONF_PORT],
         max_sources=effective(entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES),
         max_destinations=effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS),
         levels=effective(entry, CONF_LEVELS,            DEFAULT_LEVELS),
+        router_name=rname,
         csv_loaded=csv_loaded,
         route_callback=_route_callback,
         mnemonic_callback=_mnemonic_callback,
@@ -92,10 +94,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if csv_loaded:
         if stored_src := entry.data.get("source_names"):
             client.source_names.update({int(k): v for k, v in stored_src.items()})
-            _LOGGER.debug("Loaded %d source names from CSV profile", len(stored_src))
+            _LOGGER.debug("[%s] Loaded %d source names from CSV profile", rname, len(stored_src))
         if stored_dst := entry.data.get("destination_names"):
             client.destination_names.update({int(k): v for k, v in stored_dst.items()})
-            _LOGGER.debug("Loaded %d destination names from CSV profile", len(stored_dst))
+            _LOGGER.debug("[%s] Loaded %d destination names from CSV profile", rname, len(stored_dst))
 
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,

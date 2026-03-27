@@ -154,7 +154,11 @@ _INTEGRATION_ONLY_LOGGERS = [
     "custom_components.evertz_quartz.config_flow",
     "custom_components.evertz_quartz.options_flow",
 ]
-_CLIENT_LOGGER = "custom_components.evertz_quartz.quartz_client"
+def _client_logger_name(entry) -> str:
+    """Named logger for this router's client — e.g. quartz_client.MY-ROUTER"""
+    name = router_display_name(entry)
+    base = "custom_components.evertz_quartz.quartz_client"
+    return f"{base}.{name}" if name else base
 
 
 class QuartzLogLevelSelect(SelectEntity):
@@ -177,18 +181,20 @@ class QuartzLogLevelSelect(SelectEntity):
         # Restore persisted level from options, fall back to current logger level
         opt_key = "client_log_level" if mode == "client" else "integration_log_level"
         persisted = entry.options.get(opt_key)
+        client_log = _client_logger_name(entry)
         if persisted and persisted in _LOG_LEVELS:
-            # Apply persisted level immediately on startup
             numeric = getattr(logging, persisted)
             if mode == "client":
-                logging.getLogger(_CLIENT_LOGGER).setLevel(numeric)
+                # Set both the router-specific logger and the base quartz_client logger
+                logging.getLogger(client_log).setLevel(numeric)
+                logging.getLogger("custom_components.evertz_quartz.quartz_client").setLevel(numeric)
             else:
                 for name in _INTEGRATION_ONLY_LOGGERS:
                     logging.getLogger(name).setLevel(numeric)
             self._current = persisted
         else:
             self._current = _current_log_level(
-                _CLIENT_LOGGER if mode == "client" else "custom_components.evertz_quartz"
+                client_log if mode == "client" else "custom_components.evertz_quartz"
             )
 
     @property
@@ -207,16 +213,19 @@ class QuartzLogLevelSelect(SelectEntity):
         if option not in _LOG_LEVELS:
             return
         numeric = getattr(logging, option)
+        rname = router_display_name(self._entry)
         if self._mode == "client":
-            logging.getLogger(_CLIENT_LOGGER).setLevel(numeric)
-            _LOGGER.info("Client (quartz_client) log level set to %s", option)
+            client_log = _client_logger_name(self._entry)
+            logging.getLogger(client_log).setLevel(numeric)
+            # Also set the base quartz_client logger so non-prefixed fallback works
+            logging.getLogger("custom_components.evertz_quartz.quartz_client").setLevel(numeric)
+            _LOGGER.info("[%s] Client log level set to %s", rname, option)
         else:
             for name in _INTEGRATION_ONLY_LOGGERS:
                 logging.getLogger(name).setLevel(numeric)
-            _LOGGER.info("Integration log level set to %s", option)
+            _LOGGER.info("[%s] Integration log level set to %s", rname, option)
         self._current = option
         self.async_write_ha_state()
-        # Persist to options so level survives HA restarts
         opt_key = "client_log_level" if self._mode == "client" else "integration_log_level"
         new_options = dict(self._entry.options)
         new_options[opt_key] = option

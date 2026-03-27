@@ -74,10 +74,12 @@ def _build_diff_summary(
     # Destination count
     if result.max_destinations > 0 and result.max_destinations != cur_dst:
         changes.append(f"Max Destinations: {cur_dst} → {result.max_destinations}")
-        reload_needed = True
 
-    # Names — always show as a change when CSV provides them,
-    # even if the count is the same (names may have been updated on the router)
+    # Any CSV import triggers a full reload — names, port maps, and counts
+    # may all have changed (source Order values may have shifted)
+    reload_needed = True
+
+    # Names — always shown since order may have changed even if count is same
     new_src_names = len(result.source_names)
     new_dst_names = len(result.destination_names)
     old_src_names = len(cur_src_names)
@@ -217,7 +219,7 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
             lines.append(f"• {change}")
         if reload_needed:
             lines.append("")
-            lines.append("⚠ Max Destinations changed — the integration will **reload** to create or remove entities.")
+            lines.append("⚠ The integration will **reload** to apply all changes — names, counts, and port maps will refresh.")
         if warnings:
             lines.append("")
             lines.append("**Warnings:**")
@@ -269,39 +271,18 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                 connect_timeout=settings.get(CONF_CONNECT_TIMEOUT),
             )
 
-        # ── Apply levels live ─────────────────────────────────────────────
-        if new_levels != old_levels and client:
+        # ── Apply levels live (no CSV involved) ──────────────────────────
+        if new_levels != old_levels and client and not (source_names or destination_names or source_port_map or destination_port_map):
             client.levels = new_levels
             _LOGGER.info("Levels updated live: %s", new_levels)
-            self.hass.async_create_task(client.query_all_mnemonics())
 
-        # ── Apply max_sources live ────────────────────────────────────────
-        if new_max_src != old_max_src and client:
-            client.max_sources = new_max_src
-            _LOGGER.info("Max sources updated live: %d", new_max_src)
-            self.hass.async_create_task(client.query_all_routes())
-
-        # ── Push CSV source names live ────────────────────────────────────
-        if source_names and client:
-            client.source_names.update(source_names)
-            _LOGGER.info("Loaded %d source names from CSV", len(source_names))
-
-        # ── Push CSV destination names live (if dst count unchanged) ──────
-        if destination_names and client and new_max_dst == old_max_dst:
-            client.destination_names.update(destination_names)
-            _LOGGER.info("Loaded %d destination names from CSV", len(destination_names))
-
-        # Trigger entity redraw for any name changes
-        if (source_names or destination_names) and client:
-            for cb in self.hass.data.get(DOMAIN, {}).get(
-                self._entry.entry_id, {}
-            ).get("mnemonic_listeners", []):
-                self.hass.loop.call_soon_threadsafe(cb)
-
-        # ── Persist names into entry.data via hass.config_entries ────────
-        # Names go into data (not options) so they survive options resets
-        # Persist port maps + names when CSV provided; update csv_loaded flag
-        if source_port_map or destination_port_map or source_names or destination_names:
+        # ── Persist CSV data into entry.data ──────────────────────────────
+        # Names, port maps, and counts are stored in entry.data so they
+        # survive options resets and are available immediately on next startup.
+        # Any CSV import always triggers a full reload — Order values may have
+        # shifted even if counts are unchanged.
+        csv_changed = bool(source_port_map or destination_port_map or source_names or destination_names)
+        if csv_changed:
             new_data = dict(self._entry.data)
             if source_port_map:
                 new_data["source_port_map"] = {str(k): v for k, v in source_port_map.items()}
@@ -311,16 +292,20 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                 new_data["source_names"] = {str(k): v for k, v in source_names.items()}
             if destination_names:
                 new_data["destination_names"] = {str(k): v for k, v in destination_names.items()}
+            new_data[CONF_MAX_SOURCES] = new_max_src
+            new_data[CONF_MAX_DESTINATIONS] = new_max_dst
             new_data[CONF_CSV_LOADED] = True
             self.hass.config_entries.async_update_entry(self._entry, data=new_data)
 
         result = self.async_create_entry(title="", data=settings)
 
-        # ── Reload if destination count changed ───────────────────────────
-        if new_max_dst != old_max_dst:
+        # ── Reload — always on CSV import, or if counts changed ───────────
+        needs_reload = csv_changed or new_max_dst != old_max_dst or new_max_src != old_max_src
+        if needs_reload:
             _LOGGER.info(
-                "Max destinations changed %d → %d — reloading integration",
-                old_max_dst, new_max_dst,
+                "CSV import or count change — reloading integration "
+                "(src: %d→%d, dst: %d→%d, csv: %s)",
+                old_max_src, new_max_src, old_max_dst, new_max_dst, csv_changed,
             )
             self.hass.async_create_task(
                 self.hass.config_entries.async_reload(self._entry.entry_id)
