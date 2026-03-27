@@ -112,6 +112,37 @@ The **Quartz Remote Control Protocol** is an open ASCII-based protocol operating
 
 MIT
 
+
+---
+
+## Profile CSV Import
+
+The integration uses MAGNUM's `profile_availability.csv` export to populate source and destination names and counts. Without a CSV the integration works but entities show generic names (`Source 1`, `Destination 1`).
+
+### Exporting from MAGNUM
+
+In your MAGNUM web interface, export the profile availability CSV for the profile you want to control. The file has this format:
+
+```
+Device Short Name,Src or Dst,Port Number,Global Name,Hidden?,Order
+VP,SRC,1,57CAM1,0,1
+VP,DST,323,QC4720,0,1
+```
+
+The integration uses the **Order** column for entity counts and routing — this is MAGNUM's sequential profile index. Port Number is stored for diagnostics only.
+
+### Uploading during setup
+
+In the **Router Profile** step of the setup wizard, use the **Profile CSV** file picker to upload your export. The integration saves immediately with the correct counts and names.
+
+### Uploading after setup
+
+Go to **Settings → Devices & Services → Evertz Quartz → Configure** and use the **Re-import Profile CSV** file picker. You will see a diff summary of what will change before it is applied.
+
+### Clearing the CSV
+
+Press the **Clear CSV Profile** button on the device card to revert to querying the router directly for names. On MAGNUM this will result in generic names since MAGNUM does not respond to Quartz mnemonic queries.
+
 ---
 
 ## Debug & Diagnostics
