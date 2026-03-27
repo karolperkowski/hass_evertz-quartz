@@ -54,6 +54,8 @@ class QuartzClient:
         max_sources: int,
         max_destinations: int,
         levels: str,
+        src_port_map: dict[int, int] | None = None,
+        dst_port_map: dict[int, int] | None = None,
         route_callback: Callable[[int, int, str], None] | None = None,
         mnemonic_callback: Callable[[], None] | None = None,
         connection_callback: Callable[[bool], None] | None = None,
@@ -66,6 +68,10 @@ class QuartzClient:
         self.max_sources = max_sources
         self.max_destinations = max_destinations
         self.levels = levels
+        # Port maps: {order_index: quartz_port_number}
+        # Identity mapping when not provided (contiguous routers)
+        self.src_port_map: dict[int, int] = src_port_map or {n: n for n in range(1, max_sources + 1)}
+        self.dst_port_map: dict[int, int] = dst_port_map or {n: n for n in range(1, max_destinations + 1)}
         self.verbose_logging = verbose_logging
         self.reconnect_delay = reconnect_delay
         self.connect_timeout = connect_timeout
@@ -154,12 +160,13 @@ class QuartzClient:
             return False
 
     async def query_all_routes(self) -> None:
-        """Poll current route for every destination via .QL commands."""
+        """Poll current route for every destination using actual Quartz port numbers."""
         if not self._connected or self._writer is None:
             return
-        _LOGGER.debug("Polling all %d destination routes", self.max_destinations)
-        for dest in range(1, self.max_destinations + 1):
-            cmd = f".QL{self.levels}{str(dest).zfill(3)}\r"
+        dst_ports = sorted(self.dst_port_map.values())
+        _LOGGER.debug("Polling %d destination route(s): ports %s", len(dst_ports), dst_ports)
+        for port in dst_ports:
+            cmd = f".QL{self.levels}{str(port).zfill(3)}\r"
             try:
                 self._tx(cmd)
                 self._writer.write(cmd.encode())
@@ -170,28 +177,43 @@ class QuartzClient:
                 break
 
     async def query_all_mnemonics(self) -> None:
-        """Fetch source & destination labels from the router."""
+        """Fetch source & destination labels from the router using actual Quartz port numbers.
+
+        Skips ports whose names are already populated (e.g. loaded from a CSV profile)
+        to avoid flooding the router unnecessarily on reconnect.
+        """
         if not self._connected or self._writer is None:
             return
 
-        total = self.max_destinations + self.max_sources
+        # Only query ports we don't already have names for
+        dst_ports_needed = [p for p in self.dst_port_map.values() if p not in self.destination_names]
+        src_ports_needed = [p for p in self.src_port_map.values() if p not in self.source_names]
+        total = len(dst_ports_needed) + len(src_ports_needed)
+
+        if total == 0:
+            _LOGGER.debug(
+                "Mnemonic fetch skipped — all %d names already loaded from profile",
+                len(self.dst_port_map) + len(self.src_port_map),
+            )
+            return
+
         self._mnemonics_expected = total
         self._mnemonics_received = 0
         _LOGGER.debug(
-            "Fetching mnemonics: %d destinations + %d sources (%d total)",
-            self.max_destinations, self.max_sources, total,
+            "Fetching mnemonics: %d destination(s) + %d source(s) missing names",
+            len(dst_ports_needed), len(src_ports_needed),
         )
 
         try:
-            for dest in range(1, self.max_destinations + 1):
-                cmd = f".RD{dest}\r"
+            for port in sorted(dst_ports_needed):
+                cmd = f".RD{port}\r"
                 self._tx(cmd)
                 self._writer.write(cmd.encode())
                 await self._writer.drain()
                 self.stats.messages_sent += 1
                 await asyncio.sleep(0.02)
-            for src in range(1, self.max_sources + 1):
-                cmd = f".RT{src}\r"
+            for port in sorted(src_ports_needed):
+                cmd = f".RT{port}\r"
                 self._tx(cmd)
                 self._writer.write(cmd.encode())
                 await self._writer.drain()

@@ -72,12 +72,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         name = _router_display_name(entry)
         _LOGGER.info("Evertz Quartz [%s] %s", name, "connected" if connected else "disconnected")
 
+    # Load port maps before constructing client so queries use correct ports
+    src_port_map = {int(k): v for k, v in entry.data.get("source_port_map", {}).items()}
+    dst_port_map = {int(k): v for k, v in entry.data.get("destination_port_map", {}).items()}
+
     client = QuartzClient(
         host=entry.data[CONF_HOST],
         port=entry.data[CONF_PORT],
         max_sources=_effective(entry, CONF_MAX_SOURCES,     DEFAULT_MAX_SOURCES),
         max_destinations=_effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS),
         levels=_effective(entry, CONF_LEVELS,           DEFAULT_LEVELS),
+        src_port_map=src_port_map or None,
+        dst_port_map=dst_port_map or None,
         route_callback=_route_callback,
         mnemonic_callback=_mnemonic_callback,
         connection_callback=_connection_callback,
@@ -94,16 +100,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         client.destination_names.update({int(k): v for k, v in stored_dst.items()})
         _LOGGER.debug("Loaded %d destination names from stored profile", len(stored_dst))
 
-    # Load port maps (Order → Quartz Port Number) — needed for non-contiguous profiles
-    src_port_map = {int(k): v for k, v in entry.data.get("source_port_map", {}).items()}
-    dst_port_map = {int(k): v for k, v in entry.data.get("destination_port_map", {}).items()}
     if src_port_map:
         _LOGGER.debug("Loaded source port map (%d entries)", len(src_port_map))
     if dst_port_map:
         _LOGGER.debug("Loaded destination port map (%d entries)", len(dst_port_map))
 
-    # Build the entry data dict in one shot — port maps must be present
-    # before async_forward_entry_setups so select entities can read them
+    # Build entry data dict — port maps exposed for select entities
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,
         "route_listeners": route_listeners,
