@@ -29,8 +29,78 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up profile mismatch binary sensor."""
-    async_add_entities([QuartzProfileMismatchSensor(hass, entry)])
+    """Set up binary sensors — connection status and profile mismatch."""
+    async_add_entities([
+        QuartzConnectedSensor(hass, entry),
+        QuartzProfileMismatchSensor(hass, entry),
+    ])
+
+
+class QuartzConnectedSensor(BinarySensorEntity):
+    """
+    Binary sensor showing live TCP connection status to the router.
+    ON = connected, OFF = disconnected.
+    Updates immediately when the connection state changes.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_should_poll = False
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self._hass = hass
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_connected"
+
+    @property
+    def name(self) -> str:
+        return "Connected"
+
+    @property
+    def device_info(self):
+        return _device_info(self._entry)
+
+    @property
+    def is_on(self) -> bool:
+        client = (
+            self._hass.data.get(DOMAIN, {})
+            .get(self._entry.entry_id, {})
+            .get("client")
+        )
+        return bool(client and client._connected)  # noqa: SLF001
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        client = (
+            self._hass.data.get(DOMAIN, {})
+            .get(self._entry.entry_id, {})
+            .get("client")
+        )
+        if not client:
+            return {}
+        import time
+        return {
+            "host":             client.host,
+            "port":             client.port,
+            "reconnect_count":  client.stats.reconnect_count,
+            "last_connected":   (
+                time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(client.stats.connect_time))
+                if client.stats.connect_time else None
+            ),
+            "last_disconnected": (
+                time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(client.stats.disconnect_time))
+                if client.stats.disconnect_time else None
+            ),
+        }
+
+    async def async_added_to_hass(self) -> None:
+        entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        if "connection_listeners" in entry_data:
+            entry_data["connection_listeners"].append(self._on_connection_change)
+
+    @callback
+    def _on_connection_change(self) -> None:
+        self.async_write_ha_state()
 
 
 class QuartzProfileMismatchSensor(BinarySensorEntity):

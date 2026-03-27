@@ -31,7 +31,7 @@ from .quartz_client import QuartzClient
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SELECT, Platform.BUTTON, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [Platform.SELECT, Platform.BUTTON, Platform.BINARY_SENSOR, Platform.SENSOR]
 
 ATTR_DESTINATION  = "destination"
 ATTR_SOURCE       = "source"
@@ -48,6 +48,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     route_listeners: list = []
     mnemonic_listeners: list = []
     mismatch_listeners: list = []
+    connection_listeners: list = []   # notified on connect/disconnect
     mismatch_orders: set = set()   # (kind, order) pairs seen out-of-range this session
 
     def _route_callback(dest: int, src: int, levels: str) -> None:
@@ -61,6 +62,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def _connection_callback(connected: bool) -> None:
         name = router_display_name(entry)
         _LOGGER.info("Evertz Quartz [%s] %s", name, "connected" if connected else "disconnected")
+        for cb in connection_listeners:
+            hass.loop.call_soon_threadsafe(cb)
 
     def _notify_callback(kind: str, order: int) -> None:
         """Called by client when an out-of-range Order is received."""
@@ -137,6 +140,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "route_listeners": route_listeners,
         "mnemonic_listeners": mnemonic_listeners,
         "mismatch_listeners": mismatch_listeners,
+        "connection_listeners": connection_listeners,
         "mismatch_orders": mismatch_orders,
     }
 

@@ -121,6 +121,21 @@
           "on": "Mismatch detected",
           "off": "Normal"
         }
+      },
+      "connected": {
+        "name": "Connected",
+        "state": {
+          "on": "Connected",
+          "off": "Disconnected"
+        }
+      }
+    },
+    "sensor": {
+      "last_connected": {
+        "name": "Last Connected"
+      },
+      "profile_summary": {
+        "name": "Profile"
       }
     }
   },
