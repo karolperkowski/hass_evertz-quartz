@@ -3,18 +3,32 @@
     "step": {
       "user": {
         "title": "Connect to Evertz Quartz Router",
-        "description": "Enter the connection details for your Evertz EQX/EQT router or MAGNUM controller.",
+        "description": "Enter the IP address and port of your Evertz EQX/EQT router or MAGNUM controller.",
         "data": {
           "host": "IP Address",
-          "port": "TCP Port",
+          "port": "TCP Port"
+        },
+        "data_description": {
+          "port": "Common ports: 3737 (EMR/EQX), 23 (legacy Telnet)"
+        }
+      },
+      "detect": {
+        "title": "Detected Router Size",
+        "description": "Connected to {host}:{port}. The router was probed to detect its size. Review and confirm the values below — you can override them if needed.",
+        "data": {
           "max_sources": "Max Sources",
           "max_destinations": "Max Destinations",
           "levels": "Levels (e.g. V, VA, VABC)"
+        },
+        "data_description": {
+          "max_sources": "Auto-detected: {detected_sources}",
+          "max_destinations": "Auto-detected: {detected_destinations}",
+          "levels": "V = video only. Append A, B, C… for audio levels. E.g. VABC switches video + 3 audio levels simultaneously."
         }
       }
     },
     "error": {
-      "cannot_connect": "Unable to connect to the router. Check the IP address and port.",
+      "cannot_connect": "Unable to connect — check the IP address and port.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
@@ -25,16 +39,16 @@
     "step": {
       "init": {
         "title": "Evertz Quartz Debug & Connection Options",
-        "description": "These settings can be changed at any time without restarting Home Assistant.",
+        "description": "These settings apply immediately — no restart required.",
         "data": {
           "verbose_logging": "Verbose TCP logging (log every TX/RX message)",
           "reconnect_delay": "Reconnect delay (seconds)",
           "connect_timeout": "Connection timeout (seconds)"
         },
         "data_description": {
-          "verbose_logging": "When enabled, every raw Quartz protocol message sent and received is written to the Home Assistant log at DEBUG level. Useful for troubleshooting routing issues.",
-          "reconnect_delay": "How long to wait before attempting to reconnect after a connection drop.",
-          "connect_timeout": "Maximum time allowed to establish the initial TCP connection."
+          "verbose_logging": "Logs every raw Quartz frame sent and received at DEBUG level. Useful for troubleshooting but chatty on busy routers.",
+          "reconnect_delay": "How long to wait before reconnecting after a connection drop.",
+          "connect_timeout": "Maximum time to establish the initial TCP connection."
         }
       }
     }
