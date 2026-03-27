@@ -169,12 +169,27 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         self._destination_names    = overrides.get("destination_names", {})
                         self._destination_port_map = overrides.get("destination_port_map", {})
                     if not errors:
-                        # Re-show with populated values for review
-                        return await self.async_step_profile()
+                        # CSV parsed — save immediately using CSV values + any
+                        # other fields the user already filled in on the form
+                        csv_was_uploaded = True
+                        data = {
+                            CONF_HOST:              self._host,
+                            CONF_PORT:              self._port,
+                            CONF_NAME:              self._router_name,
+                            CONF_MAX_SOURCES:       self._max_sources,
+                            CONF_MAX_DESTINATIONS:  self._max_destinations,
+                            CONF_LEVELS:            user_input.get(CONF_LEVELS, self._levels),
+                            CONF_CSV_LOADED:        True,
+                            "source_port_map":      {str(k): v for k, v in self._source_port_map.items()},
+                            "destination_port_map": {str(k): v for k, v in self._destination_port_map.items()},
+                            "source_names":         {str(k): v for k, v in self._source_names.items()},
+                            "destination_names":    {str(k): v for k, v in self._destination_names.items()},
+                        }
+                        return self.async_create_entry(title=self._router_name, data=data)
 
             if not errors:
-                # Serialize port maps with string keys for JSON storage
-                csv_was_uploaded = bool(self._source_port_map or self._destination_port_map)
+                # No CSV — save with manually entered values
+                csv_was_uploaded = False
                 data = {
                     CONF_HOST:              self._host,
                     CONF_PORT:              self._port,
@@ -182,13 +197,11 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_MAX_SOURCES:       user_input.get(CONF_MAX_SOURCES, self._max_sources),
                     CONF_MAX_DESTINATIONS:  user_input.get(CONF_MAX_DESTINATIONS, self._max_destinations),
                     CONF_LEVELS:            user_input.get(CONF_LEVELS, self._levels),
-                    CONF_CSV_LOADED:        csv_was_uploaded,
-                    # Port maps: persist Order↔Port mapping from CSV
-                    "source_port_map":      {str(k): v for k, v in self._source_port_map.items()},
-                    "destination_port_map": {str(k): v for k, v in self._destination_port_map.items()},
-                    # Names: persisted only when CSV loaded — router is authoritative otherwise
-                    "source_names":         {str(k): v for k, v in self._source_names.items()} if csv_was_uploaded else {},
-                    "destination_names":    {str(k): v for k, v in self._destination_names.items()} if csv_was_uploaded else {},
+                    CONF_CSV_LOADED:        False,
+                    "source_port_map":      {},
+                    "destination_port_map": {},
+                    "source_names":         {},
+                    "destination_names":    {},
                 }
                 return self.async_create_entry(title=self._router_name, data=data)
 
