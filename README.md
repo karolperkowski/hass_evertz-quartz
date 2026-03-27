@@ -2,16 +2,18 @@
 
 [![HACS Custom Repository](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
-A Home Assistant custom integration for controlling **Evertz EQX / EQT video routers** using the **Quartz Remote Control Protocol** over TCP.
+Control **Evertz EQX / EQT video routers** from Home Assistant using the Quartz Remote Control Protocol over TCP.
 
-## Features
+> **New to this?** This integration talks to your router (or MAGNUM controller) over the network. Once installed, you get a dropdown entity per destination that lets you switch sources — and changes made on the router reflect back in HA automatically.
 
-- **One `select` entity per destination** — choose any source from a dropdown
-- **Real-time push updates** — unsolicited `.UV` messages from the router update HA state instantly
-- **Mnemonic names** — source and destination labels are pulled from the router on startup
-- **`evertz_quartz.route` service** — call from automations or scripts with optional level override
-- **Auto-reconnect** — transparently reconnects after a network interruption
-- **HACS compatible**
+---
+
+## Related Repository
+
+| Repo | Purpose |
+|---|---|
+| **hass_evertz-quartz** (this repo) | HA integration — entities, service, config |
+| **[lovelace-evertz-quartz](https://github.com/karolperkowski/lovelace-evertz-quartz)** | Optional Lovelace card — better UI for large routers |
 
 ---
 
@@ -20,40 +22,61 @@ A Home Assistant custom integration for controlling **Evertz EQX / EQT video rou
 | Device | Protocol | Notes |
 |---|---|---|
 | Evertz EQX series | Quartz over TCP | Direct connection |
-| Evertz EQT series | Quartz over TCP/Serial | TCP recommended |
-| Evertz MAGNUM controller | Quartz over TCP | Supports up to 26 levels |
+| Evertz EQT series | Quartz over TCP | TCP recommended |
+| Evertz MAGNUM controller | Quartz over TCP | Port 6666, uses profile Order numbers |
 | Evertz EMR series | Quartz over TCP | Ports 3737–3740 |
+
+---
+
+## Prerequisites
+
+- Home Assistant 2024.6.0 or newer
+- HACS installed ([hacs.xyz](https://hacs.xyz))
+- Network access from HA to the router or MAGNUM controller
+- TCP port open on the router (see [Common TCP Ports](#common-tcp-ports))
 
 ---
 
 ## Installation
 
-### Via HACS (recommended)
+### Step 1 — Add the integration via HACS
 
-1. In HACS, go to **Integrations → Custom repositories**
-2. Add `https://github.com/karolperkowski/hass_evertz-quartz` as an **Integration**
-3. Search for "Evertz Quartz" and install
-4. Restart Home Assistant
+1. Open HACS → **Integrations**
+2. Click ⋮ → **Custom repositories**
+3. Add `https://github.com/karolperkowski/hass_evertz-quartz` as category **Integration**
+4. Search for **Evertz Quartz Router** and click **Download**
+5. Restart Home Assistant
 
-### Manual
+### Step 2 — Add your router
 
-Copy the `custom_components/evertz_quartz/` folder into your HA `config/custom_components/` directory and restart.
+1. Go to **Settings → Devices & Services → Add Integration**
+2. Search for **Evertz Quartz Router**
+3. Fill in the connection details (see [Configuration](#configuration))
+
+> **MAGNUM users:** Use port `6666` and upload your `profile_availability.csv` in the second step. This gives your sources and destinations their real names instead of generic labels.
 
 ---
 
 ## Configuration
 
-Go to **Settings → Devices & Services → Add Integration** and search for **Evertz Quartz Router**.
+### Step 1 of 2 — Connection
+
+| Field | Description | Example |
+|---|---|---|
+| **IP Address** | Router or MAGNUM controller IP | `192.168.1.100` |
+| **TCP Port** | Quartz control port | `6666` (MAGNUM) / `3737` (direct) |
+| **Router Name** | Friendly name shown in HA | `Studio Router` |
+
+### Step 2 of 2 — Profile
 
 | Field | Description | Default |
 |---|---|---|
-| **IP Address** | Router or MAGNUM controller IP | — |
-| **TCP Port** | Quartz control port | `3737` |
-| **Max Sources** | Number of sources configured in Quartz | `32` |
-| **Max Destinations** | Number of destinations configured in Quartz | `32` |
-| **Levels** | Routing level(s) to switch (e.g. `V`, `VA`, `VABC`) | `V` |
+| **Max Sources** | How many sources the router has | `32` |
+| **Max Destinations** | How many destinations the router has | `32` |
+| **Levels** | Signal level(s) to switch | `V` |
+| **Profile CSV** | Optional — upload MAGNUM's `profile_availability.csv` | — |
 
-> **Note:** Source and destination numbers in Quartz may differ from the router's internal crosspoint numbers if the Quartz interface is configured with an offset.
+> **Tip:** If you upload a CSV, Max Sources and Max Destinations are set automatically. You do not need to fill them in manually.
 
 ---
 
@@ -61,23 +84,82 @@ Go to **Settings → Devices & Services → Add Integration** and search for **E
 
 | Router / Controller | Default Port |
 |---|---|
-| Evertz EMR series | 3737–3740 |
-| Evertz EQX (Quartz interface) | 3737 |
-| Quartz legacy / Telnet | 23 |
-| Evertz MAGNUM | 3737 |
+| Evertz MAGNUM | `6666` |
+| Evertz EQX (direct) | `3737` |
+| Evertz EMR series | `3737` – `3740` |
+| Legacy / Telnet | `23` |
+
+---
+
+## Profile CSV (MAGNUM)
+
+MAGNUM exports a `profile_availability.csv` file that contains all your source and destination names. Without it, entities show generic labels like `Source 1`, `Source 2`.
+
+### How to export from MAGNUM
+
+In the MAGNUM web interface, export the profile availability CSV for the profile you want to control. It looks like this:
+
+```
+Device Short Name,Src or Dst,Port Number,Global Name,Hidden?,Order
+VP,SRC,1,CAMERA-1,0,1
+VP,DST,323,MON-A,0,1
+```
+
+The integration uses the **Order** column — MAGNUM's sequential profile index — for all routing commands. The Port Number column is stored for diagnostics only.
+
+### Upload during setup
+
+Upload the file in Step 2 of the setup wizard. The integration reads it immediately and saves the correct counts and names.
+
+### Upload after setup (profile changed)
+
+If your MAGNUM profile changes — sources added, removed, or reordered:
+
+1. **Settings → Devices & Services → Evertz Quartz → Configure**
+2. Upload the updated CSV
+3. Review the diff summary (shows what changed)
+4. Confirm — the integration reloads automatically
+
+> **Why does it reload?** Source Order values can shift even if the total count stays the same. A full reload ensures all entities are consistent with the new profile.
+
+### Clear the CSV
+
+Press the **Clear CSV Profile** button on the device card to remove the loaded profile. Entities revert to generic names. Routing still works — it always uses Order numbers regardless of names.
 
 ---
 
 ## Service: `evertz_quartz.route`
 
-Route a source to a destination from an automation or script:
+Route a source to a destination from an automation or script.
 
 ```yaml
 service: evertz_quartz.route
 data:
-  destination: 3       # 1-based destination number
-  source: 1            # 1-based source number
+  destination: 1       # destination Order number (from CSV)
+  source: 5            # source Order number (from CSV)
   levels: "V"          # optional — overrides the configured default
+```
+
+### Multiple routers
+
+If you have more than one router configured, you must specify which one:
+
+```yaml
+service: evertz_quartz.route
+data:
+  router_name: "Studio Router"   # name you gave at setup
+  destination: 1
+  source: 5
+```
+
+Or use the HA device ID (found at Settings → Devices → your router → device info):
+
+```yaml
+service: evertz_quartz.route
+data:
+  device_id: "abc123def456"
+  destination: 1
+  source: 5
 ```
 
 ---
@@ -88,219 +170,128 @@ data:
 |---|---|
 | `V` | Video only |
 | `VA` | Video + Audio A |
-| `VABC` | Video + Audio A/B/C |
-| `V,A,B,C,D,E,F,G` | All 8 levels |
+| `VABC` | Video + Audio A, B, and C |
+
+---
+
+## Entities
+
+### Per destination
+
+| Entity | Type | Description |
+|---|---|---|
+| `select.{name}_{destination}` | Select | Route any source to this destination. Options list shows CSV names (or generic names if no CSV loaded). |
+
+### Diagnostic (per router)
+
+These appear under the device in **Settings → Devices & Services** and are also available in automations and dashboards.
+
+| Entity | Type | Description |
+|---|---|---|
+| `select.{name}_log_level` | Select | Integration log level — Debug / Info / Warning / Error. Changes take effect immediately, no restart needed. |
+| `select.{name}_client_log_level` | Select | TCP protocol log level — controls how much raw routing traffic is logged. |
+| `button.{name}_resync_all` | Button | Re-polls both names and routes from the router. |
+| `button.{name}_resync_routes` | Button | Re-polls current route state only. |
+| `button.{name}_resync_names` | Button | Re-polls source and destination names (no effect on MAGNUM — use CSV instead). |
+| `button.{name}_clear_csv` | Button | Removes the loaded CSV profile and reverts to generic names. |
+
+### When to use each resync button
+
+- **Resync All** — after a router config change (new sources, destinations, renamed ports)
+- **Resync Routes** — if HA state looks out of sync after a reconnect
+- **Resync Names** — if labels changed on a non-MAGNUM router
+
+---
+
+## Lovelace Card
+
+For routers with many sources, the default select entity dropdown can be unwieldy. The companion Lovelace card provides a much better interface:
+
+- Favourites grid for quick access to common sources
+- Full searchable source list with category filters
+- Matrix view — all destinations as columns, all sources as rows
+- Confirm-before-take dialog to prevent accidental routes
+
+**Install separately:** [lovelace-evertz-quartz](https://github.com/karolperkowski/lovelace-evertz-quartz)
+
+See that repo for full installation instructions. The card requires this integration to be installed and working first.
+
+---
+
+## Debug & Diagnostics
+
+### Changing the log level
+
+The easiest way is via the **Log Level** and **Client Log Level** select entities on the device card. No `configuration.yaml` edit or restart needed. Levels persist across HA restarts.
+
+| Level | What you see |
+|---|---|
+| **Warning** (default) | Only problems — connection errors, routing failures |
+| **Info** | Connection events, resyncs, config changes |
+| **Debug** | Every TX / RX message, route updates, interrogate replies |
+
+### Downloading diagnostics
+
+**Settings → Devices & Services → Evertz Quartz → ⋮ → Download diagnostics**
+
+The JSON file includes:
+
+- Connection state (connected/disconnected, reconnect count, timestamps)
+- All current routes (destination → source Order numbers)
+- All loaded source and destination names
+- Message counters: `.SV` sent, `.UV` received, `.I` interrogate sent and replied
+- Protocol trace — last 100 TX/RX lines with millisecond timestamps
+- Last 20 errors
+
+Paste the `stats` and `protocol_trace` sections when reporting an issue.
+
+### Configure panel
+
+**Settings → Devices & Services → Evertz Quartz → Configure**
+
+| Option | Default | Description |
+|---|---|---|
+| **Max Sources** | 32 | Number of sources (set automatically from CSV) |
+| **Max Destinations** | 32 | Number of destinations (set automatically from CSV) |
+| **Levels** | `V` | Routing levels |
+| **Reconnect delay** | 5s | Wait time before reconnecting after a drop |
+| **Connection timeout** | 10s | Max time to establish the TCP connection |
+| **Profile CSV** | — | Re-import an updated MAGNUM profile |
 
 ---
 
 ## Protocol Notes
 
-The **Quartz Remote Control Protocol** is an open ASCII-based protocol operating over TCP (or serial). Key messages:
+The **Quartz Remote Control Protocol** (Evertz Application Note 65) is an open ASCII protocol over TCP. Messages end with `\r` (carriage return only — not `\r\n`).
 
 | Message | Direction | Meaning |
 |---|---|---|
-| `.SV[lvl][dst],[src]\r` | → Router | Set route |
+| `.SV[lvl][dst],[src]\r` | → Router | Set crosspoint |
 | `.UV[lvl][dst],[src]\r` | ← Router | Unsolicited route update |
-| `.QL[lvl][dst]\r` | → Router | Query current route |
-| `.RD[dst]\r` | → Router | Read destination mnemonic |
-| `.RT[src]\r` | → Router | Read source mnemonic |
-| `.A\r` | ← Router | Acknowledge |
+| `.I[lvl][dst]\r` | → Router | Interrogate current route |
+| `.A[lvl][dst],[src]\r` | ← Router | Route interrogate reply |
+| `.RD[dst]\r` | → Router | Read destination name |
+| `.RT[src]\r` | → Router | Read source name |
+| `.A\r` | ← Router | Generic acknowledge |
+| `.E\r` | ← Router | Error |
+
+**MAGNUM-specific behaviour:**
+
+- Routes by `Order` number (sequential profile index), not Quartz Port Number
+- Does not respond to `.RT` / `.RD` name queries — use the CSV instead
+- Sends `.UV` for all routes made from MAGNUM or other controllers
+- Holds TCP connections open without keepalives
+
+---
+
+## Test Plan
+
+See [TEST_PLAN.md](TEST_PLAN.md) for the full test suite.
+
+An interactive test runner is also available as a Claude.ai artifact — it calls the Claude API and gives PASS/FAIL verdicts automatically based on your log output.
 
 ---
 
 ## License
 
 MIT
-
-
----
-
-## Profile CSV Import
-
-The integration uses MAGNUM's `profile_availability.csv` export to populate source and destination names and counts. Without a CSV the integration works but entities show generic names (`Source 1`, `Destination 1`).
-
-### Exporting from MAGNUM
-
-In your MAGNUM web interface, export the profile availability CSV for the profile you want to control. The file has this format:
-
-```
-Device Short Name,Src or Dst,Port Number,Global Name,Hidden?,Order
-VP,SRC,1,57CAM1,0,1
-VP,DST,323,QC4720,0,1
-```
-
-The integration uses the **Order** column for entity counts and routing — this is MAGNUM's sequential profile index. Port Number is stored for diagnostics only.
-
-### Uploading during setup
-
-In the **Router Profile** step of the setup wizard, use the **Profile CSV** file picker to upload your export. The integration saves immediately with the correct counts and names.
-
-### Uploading after setup
-
-Go to **Settings → Devices & Services → Evertz Quartz → Configure** and use the **Re-import Profile CSV** file picker. You will see a diff summary of what will change before it is applied.
-
-### Clearing the CSV
-
-Press the **Clear CSV Profile** button on the device card to revert to querying the router directly for names. On MAGNUM this will result in generic names since MAGNUM does not respond to Quartz mnemonic queries.
-
-
----
-
-## Lovelace Card (`custom:evertz-quartz-card`)
-
-The dashboard card lives in its own repository and is installed separately via HACS:
-
-**[lovelace-evertz-quartz](https://github.com/karolperkowski/lovelace-evertz-quartz)**
-
-### Installing the card
-
-**Step 1** — Add the card repo to HACS:
-
-HACS → Dashboard → ⋮ → Custom repositories → add `https://github.com/karolperkowski/lovelace-evertz-quartz` as category **Dashboard** → Download
-
-**Step 2** — Add the JS resource:
-
-Go to **Settings → Dashboards → Resources** (three-dot menu) → **Add Resource**:
-
-```
-URL:  /hacsfiles/lovelace-evertz-quartz/evertz-quartz.js
-Type: JavaScript Module
-```
-
-**Step 2** — Add to your dashboard:
-
-```yaml
-type: custom:evertz-quartz-card
-title: CR47
-destinations:
-  - entity: select.cr47_qc4720
-    name: QC4720
-```
-
-### Card config options
-
-| Option | Required | Description |
-|---|---|---|
-| `title` | No | Router name shown in header. Defaults to `Quartz Router` |
-| `destinations` | **Yes** | List of `{entity, name}` destination select entities |
-| `connection_entity` | No | `binary_sensor` entity to show connection status |
-| `categories` | No | Custom source grouping rules (regex strings) |
-
-### Multiple destinations
-
-```yaml
-type: custom:evertz-quartz-card
-title: CR47
-destinations:
-  - entity: select.cr47_qc4720
-    name: QC4720
-  - entity: select.cr47_mon_a
-    name: MON-A
-  - entity: select.cr47_mon_b
-    name: MON-B
-```
-
-### Card features
-
-- **Favourites view** — pin frequently-used sources with ★, search the full 1164-source list below
-- **Matrix view** — destinations as columns, sources as rows, grouped by category
-- **Confirm before take** — confirm dialog prevents accidental route changes
-- **Connection status** — live badge in header
-- **Last take log** — shows destination, source and timestamp of last route change
-- **Persistent favourites** — saved to browser localStorage per router
-
----
-
-## Debug & Diagnostics
-
-### Enabling debug logging
-
-Add this to your `configuration.yaml` to turn on debug-level logs for the integration:
-
-```yaml
-logger:
-  default: warning
-  logs:
-    custom_components.evertz_quartz: debug
-    custom_components.evertz_quartz.quartz_client: debug
-```
-
-Restart Home Assistant, then check **Settings → System → Logs**.
-
-### Verbose TCP logging (log every message)
-
-For deeper protocol-level tracing — every raw Quartz TX/RX frame logged — enable **Verbose TCP logging** without restarting:
-
-1. Go to **Settings → Devices & Services**
-2. Click **Evertz Quartz Router → Configure**
-3. Toggle **Verbose TCP logging** on and click Submit
-
-You'll see entries like:
-```
-TX → .SVV003,001
-RX ← .UVV003,001
-RX ← .A
-```
-
-Turn it off the same way once you're done — it's chatty on busy routers.
-
-### Download diagnostics
-
-Home Assistant's built-in diagnostics dump captures a full JSON snapshot:
-- Connection state (connected, reconnect count, timestamps)
-- All current routes
-- All source and destination names
-- Message counters and the last 20 errors
-- All active options
-
-To download it: **Settings → Devices & Services → Evertz Quartz Router → ⋮ → Download diagnostics**
-
-### Connection options (Configure panel)
-
-| Option | Default | Description |
-|---|---|---|
-| **Verbose TCP logging** | Off | Log every raw TX/RX Quartz frame at DEBUG level |
-| **Reconnect delay** | 5s | Wait time before reconnecting after a drop |
-| **Connection timeout** | 10s | Max time to establish the initial TCP connection |
-
-All options apply immediately — no Home Assistant restart required.
-
----
-
-## Entities
-
-### Routing (per destination)
-
-| Entity | Type | Description |
-|---|---|---|
-| `select.destination_N` | Select | Routes a source to this destination. Options list uses mnemonic names when available. |
-
-### Diagnostic entities
-
-These appear under the device card in Settings → Devices & Services and are also available in automations and dashboards.
-
-| Entity | Type | Description |
-|---|---|---|
-| `select.log_level` | Select | Set the integration log level: **Debug / Info / Warning / Error**. Takes effect instantly — no restart or `configuration.yaml` edit needed. |
-| `button.resync_all` | Button | Re-polls both mnemonic names and current routes from the router. |
-| `button.resync_routes` | Button | Re-polls current crosspoint state only. |
-| `button.resync_names` | Button | Re-polls source and destination names only. |
-
-### When to use each resync button
-
-- **Resync All** — after a router config change (new sources/destinations, renamed ports)
-- **Resync Routes** — if HA state gets out of sync (e.g. after a reconnect)
-- **Resync Names** — if mnemonic labels changed on the router but routes are correct
-
-### Log Level
-
-The **Log Level** select entity lets you change the verbosity of the integration without editing `configuration.yaml`:
-
-| Level | Use |
-|---|---|
-| **Warning** (default) | Normal operation — only problems logged |
-| **Info** | Connection events, resync actions, option changes |
-| **Debug** | Mnemonic parsing, route change detail, keepalives |
-| **Debug** + Verbose TCP | Every raw `.SV` / `.UV` / `.A` frame logged (set Verbose TCP in Configure) |
-
-> The level resets to `Warning` on HA restart. For a permanent setting, add the `logger` block to `configuration.yaml` as described in the Debug section above.
