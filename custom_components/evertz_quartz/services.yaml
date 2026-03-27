@@ -1,0 +1,65 @@
+route:
+  name: Route Source to Destination
+  description: >
+    Routes a source to a destination on an Evertz Quartz router.
+    When multiple routers are configured, specify device_id or router_name
+    to target a specific one. If neither is given and only one router is
+    configured it is selected automatically.
+  fields:
+    device_id:
+      name: Device ID
+      description: >
+        HA device registry ID of the router. Find it in
+        Settings → Devices & Services → your router → device info.
+        Takes priority over router_name if both are supplied.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
+    router_name:
+      name: Router Name
+      description: >
+        Friendly name or IP address of the router as entered during setup
+        (case-insensitive). Used when device_id is not supplied.
+      required: false
+      example: "Studio A"
+      selector:
+        text:
+
+    destination:
+      name: Destination
+      description: >
+        Destination port number — the Quartz crosspoint address (Port Number
+        column in the profile CSV, not the sequential Order).
+      required: true
+      example: 323
+      selector:
+        number:
+          min: 1
+          max: 2048
+          mode: box
+
+    source:
+      name: Source
+      description: >
+        Source port number — the Quartz crosspoint address (Port Number
+        column in the profile CSV, not the sequential Order).
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 2048
+          mode: box
+
+    levels:
+      name: Levels
+      description: >
+        Optional routing level override (e.g. V, VA, VABC).
+        Defaults to the levels configured on the router entry.
+        V = video only; append A, B, C… for audio levels.
+      required: false
+      example: "V"
+      selector:
+        text:

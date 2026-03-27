@@ -207,3 +207,31 @@ The **Log Level** select entity lets you change the verbosity of the integration
 | **Debug** + Verbose TCP | Every raw `.SV` / `.UV` / `.A` frame logged (set Verbose TCP in Configure) |
 
 > The level resets to `Warning` on HA restart. For a permanent setting, add the `logger` block to `configuration.yaml` as described in the Debug section above.
+
+---
+
+## HomeKit Bridge compatibility
+
+If you use the **HomeKit Bridge** integration and have a large profile (hundreds of sources), you may see IID collision warnings in the logs like:
+
+```
+assign IID XXXX to <service unique_id=15BWAYPOV> as it is already in use
+```
+
+This happens because the HomeKit bridge tries to expose all new entities, and with 1000+ select entities the IID namespace can collide with existing accessories.
+
+**Fix:** Exclude Evertz Quartz entities from your HomeKit bridge in `configuration.yaml`:
+
+```yaml
+homekit:
+  filter:
+    exclude_domains:
+      - select   # or be more specific:
+    exclude_entity_globs:
+      - select.*destination*
+      - select.*source*
+      - button.resync*
+      - select.log_level
+```
+
+Or in the HomeKit Bridge UI: **Settings → Devices & Services → HomeKit Bridge → Configure → Filter entities** and exclude the `evertz_quartz` domain.
