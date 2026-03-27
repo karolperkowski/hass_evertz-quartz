@@ -3,35 +3,37 @@
     "step": {
       "user": {
         "title": "Connect to Evertz Quartz Router",
-        "description": "Enter the IP address and port of your Evertz EQX/EQT router or MAGNUM controller.",
+        "description": "Enter the connection details for your router or MAGNUM controller.",
         "data": {
           "host": "IP Address",
-          "port": "TCP Port"
+          "port": "TCP Port",
+          "router_name": "Router Name (optional)"
         },
         "data_description": {
-          "port": "Common ports: 3737 (EMR/EQX), 23 (legacy Telnet)"
+          "port": "Common ports: 3737 (EMR/EQX), 23 (legacy Telnet)",
+          "router_name": "Friendly name shown in the UI (e.g. 'Studio A Router'). Defaults to the IP address if left blank."
         }
       },
-      "detect": {
-        "title": "Router Size",
-        "description": "Connected to **{host}:{port}**.\n\nThe router was probed to auto-detect its size (auto-detected: {detected_sources} sources, {detected_destinations} destinations). You can override the values below, or paste a profile CSV export to populate them automatically.",
+      "profile": {
+        "title": "Router Profile — {router_name}",
+        "description": "Set the number of sources and destinations. Upload your MAGNUM profile_availability CSV to populate these automatically.\n\n{csv_warnings}",
         "data": {
           "max_sources": "Max Sources",
           "max_destinations": "Max Destinations",
           "levels": "Levels",
-          "csv_profile": "Profile CSV (optional)"
+          "csv_upload": "Profile CSV (optional)"
         },
         "data_description": {
-          "max_sources": "Number of sources in the Quartz profile",
-          "max_destinations": "Number of destinations in the Quartz profile",
-          "levels": "V = video. Append A, B, C… for audio. E.g. VABC routes video + 3 audio levels.",
-          "csv_profile": "Paste the contents of your EQX/MAGNUM profile export here to auto-populate source and destination counts. Leave blank to use the values above. Supported: Evertz alias export, two-column CSV, or simply '32,32'."
+          "max_sources": "Highest source port number in your profile (sources and destinations do not need to be equal).",
+          "max_destinations": "Highest destination port number in your profile.",
+          "levels": "V = video only. Append A, B, C… for audio. E.g. VABC routes video + first 3 audio levels.",
+          "csv_upload": "Upload your MAGNUM profile_availability.csv export to auto-populate counts and names. Supports partial exports — a sources-only file will only update the source count."
         }
       }
     },
     "error": {
       "cannot_connect": "Unable to connect — check the IP address and port.",
-      "csv_parse_error": "Could not parse the CSV. Check the format and try again — or leave it blank and set counts manually.",
+      "csv_parse_error": "File could not be parsed. Check the format and try again, or set counts manually.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
@@ -41,8 +43,8 @@
   "options": {
     "step": {
       "init": {
-        "title": "Evertz Quartz Router — Configure",
-        "description": "Router: **{host}**  ({current_size})\n\nMax Sources and Levels apply immediately. Changing Max Destinations reloads the integration. {csv_format}",
+        "title": "Configure — {router_name}",
+        "description": "Current size: {current_size}\n\nMax Sources and Levels apply immediately. Changing Max Destinations will reload the integration. Upload a CSV to update counts and names.",
         "data": {
           "max_sources": "Max Sources",
           "max_destinations": "Max Destinations",
@@ -50,16 +52,23 @@
           "verbose_logging": "Verbose TCP logging",
           "reconnect_delay": "Reconnect delay (seconds)",
           "connect_timeout": "Connection timeout (seconds)",
-          "csv_profile": "Import Profile CSV (optional)"
+          "csv_upload": "Re-import Profile CSV (optional)"
         },
         "data_description": {
           "max_sources": "Applies live — no restart needed.",
           "max_destinations": "Changing this will reload the integration.",
           "levels": "V = video, A/B/C = audio. E.g. VABC routes video + first 3 audio levels.",
-          "verbose_logging": "Log every raw TX/RX frame at DEBUG level.",
+          "verbose_logging": "Log every raw TX/RX Quartz frame at DEBUG level.",
           "reconnect_delay": "Seconds to wait before reconnecting after a drop.",
           "connect_timeout": "Max seconds to establish the TCP connection.",
-          "csv_profile": "Paste a profile CSV to update source/destination counts and names. Overwrites the Max Sources and Max Destinations fields above. Supported: Evertz alias export, two-column CSV, or shorthand like '32,32'."
+          "csv_upload": "Upload a new profile_availability.csv to update counts and names. You will be shown a summary of changes before they are applied."
+        }
+      },
+      "confirm_csv": {
+        "title": "Confirm Profile Import",
+        "description": "{summary}",
+        "data": {
+          "confirmed": "Apply these changes"
         }
       }
     }
@@ -85,11 +94,28 @@
   "services": {
     "route": {
       "name": "Route Source to Destination",
-      "description": "Routes a source to a destination on the Evertz router.",
+      "description": "Routes a source to a destination. When multiple routers are configured, specify device_id or router_name to target a specific one.",
       "fields": {
-        "destination": { "name": "Destination", "description": "Destination number (1-based)." },
-        "source":      { "name": "Source",      "description": "Source number (1-based)." },
-        "levels":      { "name": "Levels",      "description": "Optional level override (e.g. V, VA, VABC)." }
+        "device_id": {
+          "name": "Device ID",
+          "description": "HA device registry ID of the router. Find it in Settings → Devices & Services → your router → device info."
+        },
+        "router_name": {
+          "name": "Router Name",
+          "description": "Friendly name or IP address of the router (as entered during setup). Case-insensitive."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Destination port number (1-based, matches Quartz port number)."
+        },
+        "source": {
+          "name": "Source",
+          "description": "Source port number (1-based, matches Quartz port number)."
+        },
+        "levels": {
+          "name": "Levels",
+          "description": "Optional level override (e.g. V, VA, VABC). Defaults to the router's configured levels."
+        }
       }
     }
   }

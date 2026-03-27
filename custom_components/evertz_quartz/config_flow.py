@@ -1,20 +1,30 @@
-"""Config flow for Evertz Quartz integration."""
+"""Config flow for Evertz Quartz — two steps: connect then profile."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.selector import (
+    FileSelector,
+    FileSelectorConfig,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .const import (
     CONF_LEVELS,
     CONF_MAX_DESTINATIONS,
     CONF_MAX_SOURCES,
+    CONF_NAME,
     DEFAULT_LEVELS,
     DEFAULT_MAX_DESTINATIONS,
     DEFAULT_MAX_SOURCES,
@@ -25,14 +35,12 @@ from .csv_parser import parse_csv
 
 _LOGGER = logging.getLogger(__name__)
 
-_PROBE_MAX = 2048
-_PROBE_TIMEOUT = 1.5
-_DETECT_TIMEOUT = 30
-
-CONF_CSV_PROFILE = "csv_profile"
+_MAX_SIZE = 2048
+CONF_CSV_UPLOAD = "csv_upload"
 
 
 async def _validate_connection(host: str, port: int) -> None:
+    """Open and immediately close a TCP connection to verify reachability."""
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port), timeout=10
@@ -43,164 +51,157 @@ async def _validate_connection(host: str, port: int) -> None:
         raise CannotConnect from err
 
 
-async def _probe_router_size(host: str, port: int) -> tuple[int, int]:
-    """Binary-search probe for max sources/destinations. Returns defaults on failure."""
-    _LOGGER.debug("Probing router size at %s:%d", host, port)
+def _parse_uploaded_csv(hass, upload_id: str) -> tuple[dict, list[str]]:
+    """
+    Read the uploaded file, parse it, return (fields_to_override, warnings).
+    fields_to_override is a partial dict with any of:
+        max_sources, max_destinations, source_names, destination_names
+    Only sides that have data in the CSV are included — an SRC-only export
+    will never touch destination counts.
+    """
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=10
+        with process_uploaded_file(hass, upload_id) as file_path:
+            text = Path(file_path).read_text(encoding="utf-8", errors="replace")
+    except Exception as err:  # noqa: BLE001
+        return {}, [f"Could not read uploaded file: {err}"]
+
+    result = parse_csv(text)
+    if result is None:
+        return {}, ["File could not be parsed — check the format and try again."]
+
+    overrides: dict = {}
+    if result.max_sources > 0:
+        overrides[CONF_MAX_SOURCES] = result.max_sources
+        overrides["source_names"] = result.source_names
+    if result.max_destinations > 0:
+        overrides[CONF_MAX_DESTINATIONS] = result.max_destinations
+        overrides["destination_names"] = result.destination_names
+
+    warnings = list(result.warnings)
+    if result.hidden_sources or result.hidden_destinations:
+        warnings.append(
+            f"{result.hidden_sources} hidden source(s) and "
+            f"{result.hidden_destinations} hidden destination(s) "
+            f"present in CSV but excluded from profile."
         )
-    except (asyncio.TimeoutError, OSError) as err:
-        _LOGGER.warning("Could not connect for probing: %s", err)
-        return DEFAULT_MAX_SOURCES, DEFAULT_MAX_DESTINATIONS
 
-    async def send_cmd(cmd: str) -> str | None:
-        try:
-            writer.write(cmd.encode())
-            await writer.drain()
-            for _ in range(3):
-                raw = await asyncio.wait_for(reader.readline(), timeout=_PROBE_TIMEOUT)
-                line = raw.decode(errors="replace").strip()
-                if not line or line.startswith(".UV") or line.startswith(".P"):
-                    continue
-                return line
-        except (asyncio.TimeoutError, OSError):
-            pass
-        return None
-
-    def is_valid(resp: str | None, prefix: str) -> bool:
-        if not resp or resp.startswith(".E"):
-            return False
-        return resp.upper().startswith(prefix.upper())
-
-    async def bisect(cmd_prefix: str) -> int:
-        lo, hi, result = 1, _PROBE_MAX, 0
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            resp = await send_cmd(f"{cmd_prefix}{mid}\r")
-            if is_valid(resp, cmd_prefix):
-                result = mid
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        return result or DEFAULT_MAX_SOURCES
-
-    try:
-        max_dsts = await asyncio.wait_for(bisect(".RD"), timeout=_DETECT_TIMEOUT)
-        max_srcs = await asyncio.wait_for(bisect(".RT"), timeout=_DETECT_TIMEOUT)
-    except asyncio.TimeoutError:
-        _LOGGER.warning("Probe timed out — using defaults")
-        max_srcs, max_dsts = DEFAULT_MAX_SOURCES, DEFAULT_MAX_DESTINATIONS
-    finally:
-        try:
-            writer.close()
-            await writer.wait_closed()
-        except Exception:  # noqa: BLE001
-            pass
-
-    _LOGGER.info("Probed router: %d sources, %d destinations", max_srcs, max_dsts)
-    return max_srcs, max_dsts
+    _LOGGER.info(
+        "CSV uploaded (%s): %s",
+        result.format_detected,
+        result.summary,
+    )
+    return overrides, warnings
 
 
 class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle the config flow for Evertz Quartz."""
+    """Two-step config flow: connection details → profile / CSV upload."""
 
     VERSION = 1
 
     def __init__(self) -> None:
         self._host: str = ""
         self._port: int = DEFAULT_PORT
-        self._detected_sources: int = DEFAULT_MAX_SOURCES
-        self._detected_destinations: int = DEFAULT_MAX_DESTINATIONS
-        self._csv_source_names: dict[int, str] = {}
-        self._csv_dest_names: dict[int, str] = {}
+        self._router_name: str = ""
+        # Profile data — populated from CSV or left at defaults
+        self._max_sources: int = DEFAULT_MAX_SOURCES
+        self._max_destinations: int = DEFAULT_MAX_DESTINATIONS
+        self._levels: str = DEFAULT_LEVELS
+        self._source_names: dict[int, str] = {}
+        self._destination_names: dict[int, str] = {}
+        self._csv_warnings: list[str] = []
 
-    # ── Step 1: host + port ───────────────────────────────────────────────
+    # ── Step 1: connection ────────────────────────────────────────────────
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
+        """Host, port, optional router name.  Validates TCP connectivity."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            host = user_input[CONF_HOST].strip()
+            port = user_input[CONF_PORT]
+            name = user_input.get(CONF_NAME, "").strip()
+
             try:
-                await _validate_connection(user_input[CONF_HOST], user_input[CONF_PORT])
+                await _validate_connection(host, port)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
-                self._host = user_input[CONF_HOST]
-                self._port = user_input[CONF_PORT]
-                return await self.async_step_detect()
+                self._host = host
+                self._port = port
+                self._router_name = name or host   # fall back to IP
+                return await self.async_step_profile()
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
-                vol.Required(CONF_HOST): str,
+                vol.Required(CONF_HOST): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.TEXT)
+                ),
                 vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
+                vol.Optional(CONF_NAME, default=""): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.TEXT)
+                ),
             }),
             errors=errors,
         )
 
-    # ── Step 2: auto-probe + optional CSV ────────────────────────────────
+    # ── Step 2: profile / CSV ────────────────────────────────────────────
 
-    async def async_step_detect(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_profile(self, user_input: dict | None = None) -> FlowResult:
+        """Max sources, destinations, levels, optional CSV file upload."""
         errors: dict[str, str] = {}
 
-        if user_input is None:
-            # First arrival — run the probe
-            srcs, dsts = await _probe_router_size(self._host, self._port)
-            self._detected_sources = srcs
-            self._detected_destinations = dsts
-
         if user_input is not None:
-            csv_text = user_input.get(CONF_CSV_PROFILE, "").strip()
-
-            # If CSV was provided, try to parse it
-            if csv_text:
-                result = parse_csv(csv_text)
-                if result is None:
-                    errors[CONF_CSV_PROFILE] = "csv_parse_error"
+            # Process CSV upload if provided
+            upload_id = user_input.get(CONF_CSV_UPLOAD)
+            if upload_id:
+                overrides, warnings = await self.hass.async_add_executor_job(
+                    _parse_uploaded_csv, self.hass, upload_id
+                )
+                if warnings and not overrides:
+                    errors[CONF_CSV_UPLOAD] = "csv_parse_error"
+                    self._csv_warnings = warnings
                 else:
-                    # CSV wins over probe — use its counts, store names for later
-                    if result.max_sources > 0:
-                        self._detected_sources = result.max_sources
-                        self._csv_source_names = result.source_names
-                    if result.max_destinations > 0:
-                        self._detected_destinations = result.max_destinations
-                        self._csv_dest_names = result.destination_names
-                    _LOGGER.info(
-                        "CSV parsed (%s): %d sources, %d destinations",
-                        result.format_detected,
-                        result.max_sources,
-                        result.max_destinations,
-                    )
+                    self._csv_warnings = warnings
+                    if CONF_MAX_SOURCES in overrides:
+                        self._max_sources = overrides[CONF_MAX_SOURCES]
+                        self._source_names = overrides.get("source_names", {})
+                    if CONF_MAX_DESTINATIONS in overrides:
+                        self._max_destinations = overrides[CONF_MAX_DESTINATIONS]
+                        self._destination_names = overrides.get("destination_names", {})
+                    # Re-show form with populated values so user can review
+                    if not errors:
+                        return await self.async_step_profile()
 
             if not errors:
                 data = {
                     CONF_HOST: self._host,
                     CONF_PORT: self._port,
-                    CONF_MAX_SOURCES: user_input[CONF_MAX_SOURCES],
-                    CONF_MAX_DESTINATIONS: user_input[CONF_MAX_DESTINATIONS],
-                    CONF_LEVELS: user_input[CONF_LEVELS],
+                    CONF_NAME: self._router_name,
+                    CONF_MAX_SOURCES: user_input.get(CONF_MAX_SOURCES, self._max_sources),
+                    CONF_MAX_DESTINATIONS: user_input.get(CONF_MAX_DESTINATIONS, self._max_destinations),
+                    CONF_LEVELS: user_input.get(CONF_LEVELS, self._levels),
+                    # Store names in data so they survive reloads
+                    "source_names": self._source_names,
+                    "destination_names": self._destination_names,
                 }
-                title = (
-                    f"Evertz Quartz ({self._host}:{self._port})"
-                    f" — {data[CONF_MAX_SOURCES]}×{data[CONF_MAX_DESTINATIONS]}"
-                )
+                title = self._router_name
                 return self.async_create_entry(title=title, data=data)
 
         return self.async_show_form(
-            step_id="detect",
+            step_id="profile",
             data_schema=vol.Schema({
-                vol.Required(CONF_MAX_SOURCES,      default=self._detected_sources):      vol.All(int, vol.Range(min=1, max=_PROBE_MAX)),
-                vol.Required(CONF_MAX_DESTINATIONS, default=self._detected_destinations): vol.All(int, vol.Range(min=1, max=_PROBE_MAX)),
-                vol.Required(CONF_LEVELS,           default=DEFAULT_LEVELS):              str,
-                vol.Optional(CONF_CSV_PROFILE,      default=""):                          str,
+                vol.Required(CONF_MAX_SOURCES,      default=self._max_sources):      vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
+                vol.Required(CONF_MAX_DESTINATIONS, default=self._max_destinations): vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
+                vol.Required(CONF_LEVELS,           default=self._levels):           str,
+                vol.Optional(CONF_CSV_UPLOAD): FileSelector(
+                    FileSelectorConfig(accept=".csv,text/csv")
+                ),
             }),
             errors=errors,
             description_placeholders={
-                "host":                   self._host,
-                "port":                   str(self._port),
-                "detected_sources":       str(self._detected_sources),
-                "detected_destinations":  str(self._detected_destinations),
+                "router_name": self._router_name,
+                "csv_warnings": "; ".join(self._csv_warnings) if self._csv_warnings else "",
             },
         )
 
@@ -211,4 +212,4 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class CannotConnect(Exception):
-    """Error to indicate we cannot connect."""
+    """Error indicating TCP connection failed."""

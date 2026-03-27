@@ -22,8 +22,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# ── Log level entity ─────────────────────────────────────────────────────────
-
 _INTEGRATION_LOGGERS = [
     "custom_components.evertz_quartz",
     "custom_components.evertz_quartz.quartz_client",
@@ -32,33 +30,45 @@ _INTEGRATION_LOGGERS = [
     "custom_components.evertz_quartz.config_flow",
     "custom_components.evertz_quartz.options_flow",
 ]
-
 _LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
 _DEFAULT_LOG_LEVEL = "WARNING"
 
 
-def _current_log_level() -> str:
-    """Read the effective level of the root integration logger."""
-    logger = logging.getLogger("custom_components.evertz_quartz")
-    name = logging.getLevelName(logger.level)
-    return name if name in _LOG_LEVELS else _DEFAULT_LOG_LEVEL
-
-
 def _effective(entry: ConfigEntry, key: str, default):
-    """Options override data, data overrides default."""
     if key in entry.options:
         return entry.options[key]
     return entry.data.get(key, default)
 
 
-# ── Platform setup ────────────────────────────────────────────────────────────
+def _router_display_name(entry: ConfigEntry) -> str:
+    from . import _router_display_name as _rdn
+    return _rdn(entry)
+
+
+def _current_log_level() -> str:
+    logger = logging.getLogger("custom_components.evertz_quartz")
+    name = logging.getLevelName(logger.level)
+    return name if name in _LOG_LEVELS else _DEFAULT_LOG_LEVEL
+
+
+def _device_info(entry: ConfigEntry) -> DeviceInfo:
+    """Shared DeviceInfo keyed to entry_id — router name as device name."""
+    from . import _router_display_name as _rdn
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=_rdn(entry),
+        manufacturer="Evertz",
+        model="EQX / EQT Router",
+        configuration_url=f"http://{entry.data.get('host', '')}",
+    )
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up destination select entities + log level control."""
+    """Set up destination selects + log level control."""
     client = hass.data[DOMAIN][entry.entry_id]["client"]
     max_destinations = _effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
     max_sources      = _effective(entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES)
@@ -71,21 +81,13 @@ async def async_setup_entry(
     async_add_entities(entities, update_before_add=True)
 
 
-# ── Destination routing entity ────────────────────────────────────────────────
-
 class QuartzDestinationSelect(SelectEntity):
-    """One HA select entity = one router destination."""
+    """One HA select entity per router destination."""
 
     _attr_should_poll = False
     _attr_has_entity_name = True
 
-    def __init__(
-        self,
-        entry: ConfigEntry,
-        client,
-        destination: int,
-        max_sources: int,
-    ) -> None:
+    def __init__(self, entry: ConfigEntry, client, destination: int, max_sources: int) -> None:
         self._entry = entry
         self._client = client
         self._destination = destination
@@ -94,6 +96,7 @@ class QuartzDestinationSelect(SelectEntity):
 
     @property
     def name(self) -> str:
+        """Destination mnemonic from router, or 'Destination N' fallback."""
         return (
             self._client.destination_names.get(self._destination)
             or f"Destination {self._destination}"
@@ -101,12 +104,7 @@ class QuartzDestinationSelect(SelectEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name="Evertz Quartz Router",
-            manufacturer="Evertz",
-            model="EQX / EQT Router",
-        )
+        return _device_info(self._entry)
 
     @property
     def options(self) -> list[str]:
@@ -128,6 +126,7 @@ class QuartzDestinationSelect(SelectEntity):
             "destination_number": self._destination,
             "source_number": src,
             "levels": self._client.levels,
+            "router": self._entry.data.get("router_name") or self._entry.data.get("host", ""),
         }
 
     async def async_select_option(self, option: str) -> None:
@@ -161,10 +160,8 @@ class QuartzDestinationSelect(SelectEntity):
         return None
 
 
-# ── Log level control entity ──────────────────────────────────────────────────
-
 class QuartzLogLevelSelect(SelectEntity):
-    """Select entity to control integration log level at runtime."""
+    """Integration log level control — diagnostic entity."""
 
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -187,15 +184,9 @@ class QuartzLogLevelSelect(SelectEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name="Evertz Quartz Router",
-            manufacturer="Evertz",
-            model="EQX / EQT Router",
-        )
+        return _device_info(self._entry)
 
     async def async_select_option(self, option: str) -> None:
-        """Apply log level to all integration loggers instantly."""
         if option not in _LOG_LEVELS:
             return
         numeric = getattr(logging, option)
