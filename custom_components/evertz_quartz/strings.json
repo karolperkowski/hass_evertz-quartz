@@ -119,7 +119,7 @@
         "name": "Profile Mismatch",
         "state": {
           "on": "Mismatch detected",
-          "off": "Profile OK"
+          "off": "Normal"
         }
       }
     }

@@ -83,7 +83,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         f"the configured range (current maximum: {limit}).\n\n"
                         "Your router profile may have expanded or changed. "
                         "Update the profile to fix this.\n\n"
-                        f"[**Open Configure →**](/config/integrations/options_flow/{entry.entry_id})"
+                        "[**Open Configure →**](/config/integrations/integration/evertz_quartz)"
                     ),
                 },
             )
