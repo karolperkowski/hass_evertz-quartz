@@ -27,7 +27,7 @@ from .const import (
 from .csv_parser import parse_csv
 
 _LOGGER = logging.getLogger(__name__)
-_MAX_SIZE = 1024
+_MAX_SIZE = 2048
 CONF_CSV_PROFILE = "csv_profile"
 
 

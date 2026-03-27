@@ -25,7 +25,7 @@ from .csv_parser import parse_csv
 
 _LOGGER = logging.getLogger(__name__)
 
-_PROBE_MAX = 1024
+_PROBE_MAX = 2048
 _PROBE_TIMEOUT = 1.5
 _DETECT_TIMEOUT = 30
 
