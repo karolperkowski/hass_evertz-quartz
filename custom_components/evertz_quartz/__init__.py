@@ -65,12 +65,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     dst_port_map = {int(k): v for k, v in entry.data.get("destination_port_map", {}).items()}
     csv_loaded   = entry.data.get(CONF_CSV_LOADED, False)
 
+    rname = router_display_name(entry)
+
     if src_port_map:
         _LOGGER.debug("[%s] Loaded source port map (%d entries)", rname, len(src_port_map))
     if dst_port_map:
         _LOGGER.debug("[%s] Loaded destination port map (%d entries)", rname, len(dst_port_map))
-
-    rname = router_display_name(entry)
     client = QuartzClient(
         host=entry.data[CONF_HOST],
         port=entry.data[CONF_PORT],
