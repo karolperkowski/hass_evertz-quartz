@@ -175,7 +175,6 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                 vol.Required(CONF_MAX_DESTINATIONS, default=cur_max_dst):      vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
                 vol.Required(CONF_LEVELS,           default=cur_levels):       str,
                 vol.Required(CONF_VERBOSE_LOGGING,  default=cur_verbose):      bool,
-                vol.Required(CONF_CLIENT_VERBOSE,   default=cur_cli_verbose):  bool,
                 vol.Required(CONF_RECONNECT_DELAY,  default=cur_recon):        vol.All(int, vol.Range(min=1, max=300)),
                 vol.Required(CONF_CONNECT_TIMEOUT,  default=cur_timeout):      vol.All(int, vol.Range(min=3, max=60)),
                 vol.Optional(CONF_CSV_UPLOAD): FileSelector(

@@ -52,8 +52,7 @@
           "verbose_logging": "Verbose TCP logging",
           "reconnect_delay": "Reconnect delay (seconds)",
           "connect_timeout": "Connection timeout (seconds)",
-          "csv_upload": "Re-import Profile CSV (optional)",
-          "client_verbose": "Client verbose logging (raw TCP frames)"
+          "csv_upload": "Re-import Profile CSV (optional)"
         },
         "data_description": {
           "max_sources": "Applies live \u2014 no restart needed.",
@@ -62,8 +61,7 @@
           "verbose_logging": "Log every raw TX/RX Quartz frame at DEBUG level.",
           "reconnect_delay": "Seconds to wait before reconnecting after a drop.",
           "connect_timeout": "Max seconds to establish the TCP connection.",
-          "csv_upload": "Upload a new profile_availability.csv to update counts and names. You will be shown a summary of changes before they are applied.",
-          "client_verbose": "Log every raw .SV/.UV/.RT frame in quartz_client at DEBUG level. More detailed than the integration log level."
+          "csv_upload": "Upload a new profile_availability.csv to update counts and names. You will be shown a summary of changes before they are applied."
         }
       },
       "confirm_csv": {

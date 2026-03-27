@@ -29,4 +29,3 @@ DEFAULT_CONNECT_TIMEOUT = 10   # seconds
 
 # Quartz protocol constants
 QUARTZ_ACK = ".A"
-QUARTZ_ROUTE_SYNC_TIMEOUT = 2  # seconds to wait for .QL responses on connect

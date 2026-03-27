@@ -9,10 +9,10 @@ Key distinction:
 
 max_sources and max_destinations are therefore max(Order), not max(Port Number).
 
-source_port_map  / destination_port_map store {order: port_number} so that
-select entities can route to the correct Quartz port even when Order ≠ Port.
-source_names / destination_names are keyed by Port Number so they stay
-compatible with the live .RT / .RD mnemonic responses from the router.
+source_port_map / destination_port_map store {order: port_number} for
+diagnostics reference only. They are NOT used in protocol commands —
+MAGNUM routes by Order number and handles Port Number translation internally.
+source_names / destination_names are keyed by Order (MAGNUM numbering).
 
 Priority order (first match wins):
   1. MAGNUM profile_availability  (Device Short Name, Src or Dst, Port Number, Global Name, Hidden?, Order)

@@ -36,7 +36,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # .UV[levels][dest_order],[src_order]  e.g. .UV1,360  or  .UVV001,360
 RE_ROUTE_UPDATE = re.compile(r"^\.UV([A-Za-z]*)(\d+),(\d+)$")
-# .A[levels][dest_order],[src_order]  — .QL response
+# .A[levels][dest_order],[src_order]  — .I interrogate response
 RE_ROUTE_REPLY  = re.compile(r"^\.A([A-Za-z]*)(\d+),(\d+)$")
 # Mnemonic responses (only used on non-MAGNUM routers)
 RE_DEST_MNEMONIC = re.compile(r"^\.RD(\d+),(.+)$")
@@ -388,7 +388,7 @@ class QuartzClient:
                 self._route_callback(dest_order, src_order, levels_str)
             return
 
-        # .QL response: .A[levels][dest_order],[src_order]
+        # .I interrogate response: .A[levels][dest_order],[src_order]
         m = RE_ROUTE_REPLY.match(line)
         if m:
             dest_order = int(m.group(2))
@@ -397,7 +397,7 @@ class QuartzClient:
             self.routes[dest_order] = src_order
             if prev != src_order:
                 _LOGGER.debug(
-                    "Route sync (.QL reply): dest Order=%d → src Order=%d",
+                    "Route sync (.I reply): dest Order=%d → src Order=%d",
                     dest_order, src_order,
                 )
                 if self._route_callback:
