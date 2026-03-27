@@ -20,6 +20,9 @@ from .const import (
     CONF_RECONNECT_DELAY,
     CONF_VERBOSE_LOGGING,
     DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_LEVELS,
+    DEFAULT_MAX_DESTINATIONS,
+    DEFAULT_MAX_SOURCES,
     DEFAULT_RECONNECT_DELAY,
     DEFAULT_VERBOSE_LOGGING,
     DOMAIN,
@@ -35,19 +38,29 @@ ATTR_SOURCE = "source"
 ATTR_LEVELS = "levels"
 
 
+def _effective(entry: ConfigEntry, key: str, default):
+    """Return options value if set, otherwise fall back to data, then default.
+
+    This lets the options flow override any value that was set during
+    initial config — without touching entry.data.
+    """
+    if key in entry.options:
+        return entry.options[key]
+    return entry.data.get(key, default)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Evertz Quartz from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    route_listeners: list = []    # callbacks fired on .UV route updates
-    mnemonic_listeners: list = [] # callbacks fired when mnemonic names arrive
+    route_listeners: list = []
+    mnemonic_listeners: list = []
 
     def _route_callback(dest: int, src: int, levels: str) -> None:
         for cb in route_listeners:
             hass.loop.call_soon_threadsafe(cb, dest, src, levels)
 
     def _mnemonic_callback() -> None:
-        """Fire all registered mnemonic listeners so entities re-render names."""
         for cb in mnemonic_listeners:
             hass.loop.call_soon_threadsafe(cb)
 
@@ -57,19 +70,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "connected" if connected else "disconnected",
         )
 
-    opts = entry.options
+    # All three editable values read from options first, then data
+    max_sources      = _effective(entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES)
+    max_destinations = _effective(entry, CONF_MAX_DESTINATIONS,  DEFAULT_MAX_DESTINATIONS)
+    levels           = _effective(entry, CONF_LEVELS,            DEFAULT_LEVELS)
+
     client = QuartzClient(
         host=entry.data[CONF_HOST],
         port=entry.data[CONF_PORT],
-        max_sources=entry.data[CONF_MAX_SOURCES],
-        max_destinations=entry.data[CONF_MAX_DESTINATIONS],
-        levels=entry.data.get(CONF_LEVELS, "V"),
+        max_sources=max_sources,
+        max_destinations=max_destinations,
+        levels=levels,
         route_callback=_route_callback,
         mnemonic_callback=_mnemonic_callback,
         connection_callback=_connection_callback,
-        verbose_logging=opts.get(CONF_VERBOSE_LOGGING, DEFAULT_VERBOSE_LOGGING),
-        reconnect_delay=opts.get(CONF_RECONNECT_DELAY, DEFAULT_RECONNECT_DELAY),
-        connect_timeout=opts.get(CONF_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT),
+        verbose_logging=_effective(entry, CONF_VERBOSE_LOGGING,  DEFAULT_VERBOSE_LOGGING),
+        reconnect_delay=_effective(entry, CONF_RECONNECT_DELAY,  DEFAULT_RECONNECT_DELAY),
+        connect_timeout=_effective(entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT),
     )
 
     hass.data[DOMAIN][entry.entry_id] = {
@@ -80,7 +97,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await client.start()
 
-    # Wait up to 10s for initial connection
     for _ in range(20):
         if client._connected:  # noqa: SLF001
             break
@@ -94,13 +110,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
-    # Register the `evertz_quartz.route` service
     if not hass.services.has_service(DOMAIN, "route"):
         async def _handle_route_service(call: ServiceCall) -> None:
             destination = call.data[ATTR_DESTINATION]
             source = call.data[ATTR_SOURCE]
-            levels = call.data.get(ATTR_LEVELS)
-            await client.route(destination, source, levels)
+            levels_override = call.data.get(ATTR_LEVELS)
+            await client.route(destination, source, levels_override)
 
         hass.services.async_register(
             DOMAIN,
@@ -109,8 +124,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=vol.Schema(
                 {
                     vol.Required(ATTR_DESTINATION): vol.All(int, vol.Range(min=1)),
-                    vol.Required(ATTR_SOURCE): vol.All(int, vol.Range(min=1)),
-                    vol.Optional(ATTR_LEVELS): cv.string,
+                    vol.Required(ATTR_SOURCE):      vol.All(int, vol.Range(min=1)),
+                    vol.Optional(ATTR_LEVELS):      cv.string,
                 }
             ),
         )
@@ -120,15 +135,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Apply updated options live to the running client."""
+    """Called by HA when options are saved — options_flow handles live updates,
+    this is a safety net that applies any debug/connection options that may
+    have been missed (e.g. when the integration reloads)."""
     data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     client: QuartzClient | None = data.get("client")
     if client:
-        opts = entry.options
         client.update_options(
-            verbose_logging=opts.get(CONF_VERBOSE_LOGGING),
-            reconnect_delay=opts.get(CONF_RECONNECT_DELAY),
-            connect_timeout=opts.get(CONF_CONNECT_TIMEOUT),
+            verbose_logging=_effective(entry, CONF_VERBOSE_LOGGING, DEFAULT_VERBOSE_LOGGING),
+            reconnect_delay=_effective(entry, CONF_RECONNECT_DELAY, DEFAULT_RECONNECT_DELAY),
+            connect_timeout=_effective(entry, CONF_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT),
         )
 
 

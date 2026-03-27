@@ -14,10 +14,20 @@ from .const import (
     CONF_LEVELS,
     CONF_MAX_DESTINATIONS,
     CONF_MAX_SOURCES,
+    DEFAULT_LEVELS,
+    DEFAULT_MAX_DESTINATIONS,
+    DEFAULT_MAX_SOURCES,
     DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _effective(entry: ConfigEntry, key: str, default):
+    """Options override data, data overrides default."""
+    if key in entry.options:
+        return entry.options[key]
+    return entry.data.get(key, default)
 
 
 async def async_setup_entry(
@@ -25,10 +35,10 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Evertz Quartz select entities from a config entry."""
+    """Set up one select entity per destination."""
     client = hass.data[DOMAIN][entry.entry_id]["client"]
-    max_destinations = entry.data[CONF_MAX_DESTINATIONS]
-    max_sources = entry.data[CONF_MAX_SOURCES]
+    max_destinations = _effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
+    max_sources      = _effective(entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES)
 
     entities = [
         QuartzDestinationSelect(entry, client, dest, max_sources)
@@ -57,7 +67,7 @@ class QuartzDestinationSelect(SelectEntity):
         self._attr_unique_id = f"{entry.entry_id}_dest_{destination}"
 
     # ------------------------------------------------------------------
-    # Entity properties
+    # Entity properties — all read live from client so they stay current
     # ------------------------------------------------------------------
 
     @property
@@ -79,8 +89,10 @@ class QuartzDestinationSelect(SelectEntity):
 
     @property
     def options(self) -> list[str]:
-        """Source options list — uses mnemonic names when available."""
-        return [self._source_label(i) for i in range(1, self._max_sources + 1)]
+        """Source list — reflects max_sources on the live client."""
+        # Always read from client so a live max_sources update is reflected
+        max_src = self._client.max_sources
+        return [self._source_label(i) for i in range(1, max_src + 1)]
 
     @property
     def current_option(self) -> str | None:
@@ -93,6 +105,16 @@ class QuartzDestinationSelect(SelectEntity):
     @property
     def available(self) -> bool:
         return self._client._connected  # noqa: SLF001
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Expose destination number and current source number for automations."""
+        src = self._client.routes.get(self._destination)
+        return {
+            "destination_number": self._destination,
+            "source_number": src,
+            "levels": self._client.levels,
+        }
 
     # ------------------------------------------------------------------
     # Actions
@@ -107,7 +129,7 @@ class QuartzDestinationSelect(SelectEntity):
                 self._destination, option,
             )
             return
-        levels = self._entry.data.get(CONF_LEVELS, "V")
+        levels = self._client.levels
         await self._client.route(self._destination, src, levels)
 
     # ------------------------------------------------------------------
@@ -115,34 +137,19 @@ class QuartzDestinationSelect(SelectEntity):
     # ------------------------------------------------------------------
 
     async def async_added_to_hass(self) -> None:
-        """Register for both route and mnemonic push updates."""
+        """Register for route and mnemonic push updates."""
         entry_data = self.hass.data[DOMAIN][self._entry.entry_id]
-
-        # Route updates — only the entity for the affected destination redraws
         entry_data["route_listeners"].append(self._on_route_update)
-
-        # Mnemonic updates — ALL entities redraw because any name change
-        # can affect the options list or entity name of any destination
         entry_data["mnemonic_listeners"].append(self._on_mnemonic_update)
 
     @callback
     def _on_route_update(self, dest: int, src: int, levels: str) -> None:
-        """Called when the router reports a route change."""
         if dest == self._destination:
-            _LOGGER.debug(
-                "Entity dest=%d refreshed: now routed to src=%d", dest, src
-            )
             self.async_write_ha_state()
 
     @callback
     def _on_mnemonic_update(self) -> None:
-        """Called whenever any source or destination name arrives from the router.
-
-        This pushes state for every entity so that:
-        - The entity *name* (destination label) updates immediately
-        - The *options list* (source labels) updates immediately
-        - The *current_option* (which uses a source label) stays consistent
-        """
+        """Redraw on any name or size change — options list and entity name."""
         self.async_write_ha_state()
 
     # ------------------------------------------------------------------
@@ -150,12 +157,10 @@ class QuartzDestinationSelect(SelectEntity):
     # ------------------------------------------------------------------
 
     def _source_label(self, src_num: int) -> str:
-        """Source mnemonic name, or 'Source N' fallback."""
         return self._client.source_names.get(src_num) or f"Source {src_num}"
 
     def _label_to_source_number(self, label: str) -> int | None:
-        """Reverse-map a display label back to a source number."""
-        for num in range(1, self._max_sources + 1):
+        for num in range(1, self._client.max_sources + 1):
             if self._source_label(num) == label:
                 return num
         return None

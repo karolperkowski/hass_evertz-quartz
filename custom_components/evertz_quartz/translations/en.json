@@ -14,16 +14,16 @@
       },
       "detect": {
         "title": "Detected Router Size",
-        "description": "Connected to {host}:{port}. The router was probed to detect its size. Review and confirm the values below — you can override them if needed.",
+        "description": "Connected to {host}:{port}. The router was probed to auto-detect its size. Review and confirm — you can override if needed.",
         "data": {
           "max_sources": "Max Sources",
           "max_destinations": "Max Destinations",
-          "levels": "Levels (e.g. V, VA, VABC)"
+          "levels": "Levels"
         },
         "data_description": {
           "max_sources": "Auto-detected: {detected_sources}",
           "max_destinations": "Auto-detected: {detected_destinations}",
-          "levels": "V = video only. Append A, B, C… for audio levels. E.g. VABC switches video + 3 audio levels simultaneously."
+          "levels": "V = video only. Append A, B, C… for audio. E.g. VABC switches video + 3 audio levels simultaneously."
         }
       }
     },
@@ -38,17 +38,23 @@
   "options": {
     "step": {
       "init": {
-        "title": "Evertz Quartz Debug & Connection Options",
-        "description": "These settings apply immediately — no restart required.",
+        "title": "Evertz Quartz Router — Configure",
+        "description": "Current router: {host}  ({current_size})\n\nSize and level changes apply immediately. Changing Max Destinations will reload the integration to create or remove entities.",
         "data": {
-          "verbose_logging": "Verbose TCP logging (log every TX/RX message)",
+          "max_sources": "Max Sources",
+          "max_destinations": "Max Destinations",
+          "levels": "Levels",
+          "verbose_logging": "Verbose TCP logging",
           "reconnect_delay": "Reconnect delay (seconds)",
           "connect_timeout": "Connection timeout (seconds)"
         },
         "data_description": {
-          "verbose_logging": "Logs every raw Quartz frame sent and received at DEBUG level. Useful for troubleshooting but chatty on busy routers.",
-          "reconnect_delay": "How long to wait before reconnecting after a connection drop.",
-          "connect_timeout": "Maximum time to establish the initial TCP connection."
+          "max_sources": "Number of sources the integration tracks. Applies live — no restart needed.",
+          "max_destinations": "Number of destinations (= number of select entities). Changing this will reload the integration.",
+          "levels": "Routing level(s) to switch. V = video, A/B/C = audio. E.g. VABC routes video + first 3 audio levels at once.",
+          "verbose_logging": "Log every raw Quartz TX/RX frame at DEBUG level. Useful for troubleshooting; chatty on busy routers.",
+          "reconnect_delay": "Seconds to wait before reconnecting after a connection drop.",
+          "connect_timeout": "Maximum seconds to establish the initial TCP connection."
         }
       }
     }
