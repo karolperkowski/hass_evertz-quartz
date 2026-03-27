@@ -15,6 +15,7 @@ from .const import (
     DEFAULT_MAX_DESTINATIONS,
     DOMAIN,
 )
+from .helpers import effective, router_display_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,17 +31,10 @@ _LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
 _DEFAULT_LOG_LEVEL = "WARNING"
 
 
-def _effective(entry: ConfigEntry, key: str, default):
-    if key in entry.options:
-        return entry.options[key]
-    return entry.data.get(key, default)
-
-
 def _device_info(entry: ConfigEntry) -> DeviceInfo:
-    from . import _router_display_name
     return DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
-        name=_router_display_name(entry),
+        name=router_display_name(entry),
         manufacturer="Evertz",
         model="EQX / EQT Router",
         configuration_url=f"http://{entry.data.get('host', '')}",
@@ -60,7 +54,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up destination selects + log level controls."""
     client = hass.data[DOMAIN][entry.entry_id]["client"]
-    max_destinations = _effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
+    max_destinations = effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
 
     entities: list[SelectEntity] = [
         QuartzDestinationSelect(entry=entry, client=client, order=dest)

@@ -13,24 +13,20 @@ from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from .const import (
-    CONF_CLIENT_VERBOSE,
     CONF_CONNECT_TIMEOUT,
     CONF_CSV_LOADED,
     CONF_LEVELS,
     CONF_MAX_DESTINATIONS,
     CONF_MAX_SOURCES,
-    CONF_NAME,
     CONF_RECONNECT_DELAY,
-    CONF_VERBOSE_LOGGING,
-    DEFAULT_CLIENT_VERBOSE,
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_LEVELS,
     DEFAULT_MAX_DESTINATIONS,
     DEFAULT_MAX_SOURCES,
     DEFAULT_RECONNECT_DELAY,
-    DEFAULT_VERBOSE_LOGGING,
     DOMAIN,
 )
+from .helpers import effective, router_display_name
 from .quartz_client import QuartzClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,15 +39,6 @@ ATTR_LEVELS       = "levels"
 ATTR_DEVICE_ID    = "device_id"
 ATTR_ROUTER_NAME  = "router_name"
 
-
-def _effective(entry: ConfigEntry, key: str, default):
-    if key in entry.options:
-        return entry.options[key]
-    return entry.data.get(key, default)
-
-
-def _router_display_name(entry: ConfigEntry) -> str:
-    return entry.data.get(CONF_NAME) or entry.data.get(CONF_HOST, "Unknown Router")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -70,7 +57,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.loop.call_soon_threadsafe(cb)
 
     def _connection_callback(connected: bool) -> None:
-        name = _router_display_name(entry)
+        name = router_display_name(entry)
         _LOGGER.info("Evertz Quartz [%s] %s", name, "connected" if connected else "disconnected")
 
     # Load port maps (Order → Quartz port) — persisted from CSV
@@ -86,17 +73,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = QuartzClient(
         host=entry.data[CONF_HOST],
         port=entry.data[CONF_PORT],
-        max_sources=_effective(entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES),
-        max_destinations=_effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS),
-        levels=_effective(entry, CONF_LEVELS,            DEFAULT_LEVELS),
+        max_sources=effective(entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES),
+        max_destinations=effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS),
+        levels=effective(entry, CONF_LEVELS,            DEFAULT_LEVELS),
         csv_loaded=csv_loaded,
         route_callback=_route_callback,
         mnemonic_callback=_mnemonic_callback,
         connection_callback=_connection_callback,
-        verbose_logging=_effective(entry, CONF_VERBOSE_LOGGING,  DEFAULT_VERBOSE_LOGGING),
-        client_verbose=_effective(entry, CONF_CLIENT_VERBOSE,    DEFAULT_CLIENT_VERBOSE),
-        reconnect_delay=_effective(entry, CONF_RECONNECT_DELAY,  DEFAULT_RECONNECT_DELAY),
-        connect_timeout=_effective(entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT),
+        reconnect_delay=effective(entry, CONF_RECONNECT_DELAY,  DEFAULT_RECONNECT_DELAY),
+        connect_timeout=effective(entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT),
     )
     # Store port maps in client for diagnostics/reference — not used in protocol commands
     client.src_port_map = src_port_map
@@ -116,8 +101,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "client": client,
         "route_listeners": route_listeners,
         "mnemonic_listeners": mnemonic_listeners,
-        "src_port_map": src_port_map,
-        "dst_port_map": dst_port_map,
     }
 
     await client.start()
@@ -169,11 +152,11 @@ def _register_route_service(hass: HomeAssistant) -> None:
 
         elif target_name:
             for entry in entries:
-                if _router_display_name(entry).lower() == target_name.lower():
+                if router_display_name(entry).lower() == target_name.lower():
                     client = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("client")
                     break
             if client is None:
-                names = [_router_display_name(e) for e in entries]
+                names = [router_display_name(e) for e in entries]
                 raise ServiceValidationError(
                     f"Router '{target_name}' not found. Configured: {names}"
                 )
@@ -184,7 +167,7 @@ def _register_route_service(hass: HomeAssistant) -> None:
             elif len(entries) == 0:
                 raise ServiceValidationError("No Evertz Quartz routers configured")
             else:
-                names = [_router_display_name(e) for e in entries]
+                names = [router_display_name(e) for e in entries]
                 raise ServiceValidationError(
                     f"Multiple routers configured ({names}). Specify device_id or router_name."
                 )
@@ -210,10 +193,8 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
     client: QuartzClient | None = data.get("client")
     if client:
         client.update_options(
-            verbose_logging=_effective(entry, CONF_VERBOSE_LOGGING, DEFAULT_VERBOSE_LOGGING),
-            client_verbose=_effective(entry, CONF_CLIENT_VERBOSE,   DEFAULT_CLIENT_VERBOSE),
-            reconnect_delay=_effective(entry, CONF_RECONNECT_DELAY, DEFAULT_RECONNECT_DELAY),
-            connect_timeout=_effective(entry, CONF_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT),
+            reconnect_delay=effective(entry, CONF_RECONNECT_DELAY, DEFAULT_RECONNECT_DELAY),
+            connect_timeout=effective(entry, CONF_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT),
         )
 
 

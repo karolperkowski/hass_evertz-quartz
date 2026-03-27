@@ -12,8 +12,6 @@ CONF_LEVELS = "levels"
 CONF_CSV_LOADED = "csv_loaded"       # True when names/port maps came from a CSV upload
 
 # Options keys (stored in entry.options, editable via Configure)
-CONF_VERBOSE_LOGGING = "verbose_logging"
-CONF_CLIENT_VERBOSE = "client_verbose"   # raw TX/RX frame logging in quartz_client
 CONF_RECONNECT_DELAY = "reconnect_delay"
 CONF_CONNECT_TIMEOUT = "connect_timeout"
 
@@ -22,8 +20,6 @@ DEFAULT_PORT = 3737
 DEFAULT_MAX_SOURCES = 32
 DEFAULT_MAX_DESTINATIONS = 32
 DEFAULT_LEVELS = "V"
-DEFAULT_VERBOSE_LOGGING = False
-DEFAULT_CLIENT_VERBOSE = False
 DEFAULT_RECONNECT_DELAY = 5    # seconds
 DEFAULT_CONNECT_TIMEOUT = 10   # seconds
 

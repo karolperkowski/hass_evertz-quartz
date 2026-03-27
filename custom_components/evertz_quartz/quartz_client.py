@@ -25,10 +25,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .const import (
-    DEFAULT_CLIENT_VERBOSE,
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_RECONNECT_DELAY,
-    DEFAULT_VERBOSE_LOGGING,
     QUARTZ_ACK,
 )
 
@@ -72,8 +70,6 @@ class QuartzClient:
         route_callback: Callable[[int, int, str], None] | None = None,
         mnemonic_callback: Callable[[], None] | None = None,
         connection_callback: Callable[[bool], None] | None = None,
-        verbose_logging: bool = DEFAULT_VERBOSE_LOGGING,
-        client_verbose: bool = DEFAULT_CLIENT_VERBOSE,
         reconnect_delay: int = DEFAULT_RECONNECT_DELAY,
         connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
     ) -> None:
@@ -83,8 +79,6 @@ class QuartzClient:
         self.max_destinations = max_destinations
         self.levels = levels
         self.csv_loaded = csv_loaded
-        self.verbose_logging = verbose_logging
-        self.client_verbose = client_verbose
         self.reconnect_delay = reconnect_delay
         self.connect_timeout = connect_timeout
 
@@ -94,8 +88,8 @@ class QuartzClient:
         self.destination_names: dict[int, str] = {}# dst_order → name
 
         # Port maps stored for reference / diagnostics only — not used in commands
-        self.src_port_map: dict[int, int] = {}     # order → quartz_port
-        self.dst_port_map: dict[int, int] = {}     # order → quartz_port
+        self.src_port_map: dict[int, int] = {}     # order → quartz_port (diagnostics only)
+        self.dst_port_map: dict[int, int] = {}     # order → quartz_port (diagnostics only)
 
         self.stats = QuartzStats()
         self._route_callback = route_callback
@@ -123,15 +117,9 @@ class QuartzClient:
 
     def update_options(
         self,
-        verbose_logging: bool | None = None,
-        client_verbose: bool | None = None,
         reconnect_delay: int | None = None,
         connect_timeout: int | None = None,
     ) -> None:
-        if verbose_logging is not None:
-            self.verbose_logging = verbose_logging
-        if client_verbose is not None:
-            self.client_verbose = client_verbose
         if reconnect_delay is not None:
             self.reconnect_delay = reconnect_delay
         if connect_timeout is not None:

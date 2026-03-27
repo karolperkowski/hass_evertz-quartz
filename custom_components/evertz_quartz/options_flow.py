@@ -16,7 +16,6 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
-    CONF_CLIENT_VERBOSE,
     CONF_CONNECT_TIMEOUT,
     CONF_CSV_LOADED,
     CONF_LEVELS,
@@ -24,28 +23,19 @@ from .const import (
     CONF_MAX_SOURCES,
     CONF_NAME,
     CONF_RECONNECT_DELAY,
-    CONF_VERBOSE_LOGGING,
-    DEFAULT_CLIENT_VERBOSE,
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_LEVELS,
     DEFAULT_MAX_DESTINATIONS,
     DEFAULT_MAX_SOURCES,
     DEFAULT_RECONNECT_DELAY,
-    DEFAULT_VERBOSE_LOGGING,
     DOMAIN,
 )
+from .helpers import effective
 from .csv_parser import ParseResult, parse_csv
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_SIZE = 2048
 CONF_CSV_UPLOAD = "csv_upload"
-
-
-def _effective(entry: ConfigEntry, key: str, default):
-    """Options override data, data overrides default."""
-    if key in entry.options:
-        return entry.options[key]
-    return entry.data.get(key, default)
 
 
 def _parse_uploaded_csv(hass, upload_id: str) -> tuple[ParseResult | None, str]:
@@ -70,8 +60,8 @@ def _build_diff_summary(
     Compare parsed CSV against current effective config.
     Returns a dict with 'changes', 'reload_needed', 'warnings'.
     """
-    cur_src = _effective(entry, CONF_MAX_SOURCES,     DEFAULT_MAX_SOURCES)
-    cur_dst = _effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
+    cur_src = effective(entry, CONF_MAX_SOURCES,     DEFAULT_MAX_SOURCES)
+    cur_dst = effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
     cur_src_names = entry.data.get("source_names", {})
     cur_dst_names = entry.data.get("destination_names", {})
 
@@ -158,13 +148,11 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         return self._show_init_form(errors)
 
     def _show_init_form(self, errors: dict) -> FlowResult:
-        cur_max_src     = _effective(self._entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES)
-        cur_max_dst     = _effective(self._entry, CONF_MAX_DESTINATIONS,  DEFAULT_MAX_DESTINATIONS)
-        cur_levels      = _effective(self._entry, CONF_LEVELS,            DEFAULT_LEVELS)
-        cur_verbose     = _effective(self._entry, CONF_VERBOSE_LOGGING,   DEFAULT_VERBOSE_LOGGING)
-        cur_cli_verbose = _effective(self._entry, CONF_CLIENT_VERBOSE,    DEFAULT_CLIENT_VERBOSE)
-        cur_recon       = _effective(self._entry, CONF_RECONNECT_DELAY,   DEFAULT_RECONNECT_DELAY)
-        cur_timeout     = _effective(self._entry, CONF_CONNECT_TIMEOUT,   DEFAULT_CONNECT_TIMEOUT)
+        cur_max_src     = effective(self._entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES)
+        cur_max_dst     = effective(self._entry, CONF_MAX_DESTINATIONS,  DEFAULT_MAX_DESTINATIONS)
+        cur_levels      = effective(self._entry, CONF_LEVELS,            DEFAULT_LEVELS)
+        cur_recon       = effective(self._entry, CONF_RECONNECT_DELAY,   DEFAULT_RECONNECT_DELAY)
+        cur_timeout     = effective(self._entry, CONF_CONNECT_TIMEOUT,   DEFAULT_CONNECT_TIMEOUT)
         router_name     = self._entry.data.get(CONF_NAME) or self._entry.data.get("host", "")
         csv_status      = "CSV profile loaded" if self._entry.data.get(CONF_CSV_LOADED) else "No CSV — using router names"
 
@@ -174,7 +162,6 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                 vol.Required(CONF_MAX_SOURCES,      default=cur_max_src):      vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
                 vol.Required(CONF_MAX_DESTINATIONS, default=cur_max_dst):      vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
                 vol.Required(CONF_LEVELS,           default=cur_levels):       str,
-                vol.Required(CONF_VERBOSE_LOGGING,  default=cur_verbose):      bool,
                 vol.Required(CONF_RECONNECT_DELAY,  default=cur_recon):        vol.All(int, vol.Range(min=1, max=300)),
                 vol.Required(CONF_CONNECT_TIMEOUT,  default=cur_timeout):      vol.All(int, vol.Range(min=3, max=60)),
                 vol.Optional(CONF_CSV_UPLOAD): FileSelector(
@@ -267,9 +254,9 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
             .get("client")
         )
 
-        old_max_src = _effective(self._entry, CONF_MAX_SOURCES,     DEFAULT_MAX_SOURCES)
-        old_max_dst = _effective(self._entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
-        old_levels  = _effective(self._entry, CONF_LEVELS,           DEFAULT_LEVELS)
+        old_max_src = effective(self._entry, CONF_MAX_SOURCES,     DEFAULT_MAX_SOURCES)
+        old_max_dst = effective(self._entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
+        old_levels  = effective(self._entry, CONF_LEVELS,           DEFAULT_LEVELS)
 
         new_max_src = settings[CONF_MAX_SOURCES]
         new_max_dst = settings[CONF_MAX_DESTINATIONS]
@@ -278,7 +265,6 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         # ── Apply debug/connection options live ───────────────────────────
         if client:
             client.update_options(
-                verbose_logging=settings.get(CONF_VERBOSE_LOGGING),
                 reconnect_delay=settings.get(CONF_RECONNECT_DELAY),
                 connect_timeout=settings.get(CONF_CONNECT_TIMEOUT),
             )
