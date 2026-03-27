@@ -179,24 +179,25 @@ class QuartzClient:
 
     async def query_all_routes(self) -> None:
         """
-        Send .QL for each destination Order. Responses (if any) handled in _dispatch.
-        MAGNUM does not respond — optimistic state is used instead.
+        Send .I{level}{dest} (Interrogate Route) for each destination Order.
+        Response format: .A{level}{dest},{src}(cr)
+        MAGNUM may not respond — optimistic state is used as fallback.
         """
         if not self._connected or self._writer is None:
             return
 
         dst_orders = list(range(1, self.max_destinations + 1))
-        _LOGGER.debug("Querying route state for destination order(s): %s", dst_orders)
+        _LOGGER.debug("Interrogating route state for destination order(s): %s", dst_orders)
         try:
             for order in dst_orders:
-                cmd = f".QL{self.levels}{str(order).zfill(3)}\r"
+                cmd = f".I{self.levels}{order}\r"
                 _LOGGER.debug("TX → %s", cmd.strip())
                 self._writer.write(cmd.encode())
                 await self._writer.drain()
                 self.stats.messages_sent += 1
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(0.05)
         except OSError as err:
-            _LOGGER.warning("Error sending .QL: %s", err)
+            _LOGGER.warning("Error sending .I interrogate: %s", err)
 
     async def query_all_mnemonics(self) -> None:
         """
@@ -326,16 +327,34 @@ class QuartzClient:
 
         while self._running and self._connected:
             try:
-                raw = await asyncio.wait_for(self._reader.readline(), timeout=60)
+                # Quartz protocol terminates messages with \r (0x0D) only — not \n.
+                # Using readuntil(b'\r') ensures we receive each message immediately
+                # rather than waiting 60 seconds for a \n that never arrives.
+                raw = await asyncio.wait_for(
+                    self._reader.readuntil(b'\r'), timeout=60
+                )
+            except asyncio.IncompleteReadError as e:
+                # EOF mid-message
+                raw = e.partial
+                if not raw:
+                    _LOGGER.warning("Router closed connection (EOF)")
+                    break
             except asyncio.TimeoutError:
-                # No keepalive sent — MAGNUM holds the connection open
-                # and invalid commands trigger .E responses or disconnection.
-                # Genuine drops are handled by the reconnect loop.
+                # 60s of silence — connection likely still alive (MAGNUM holds it open)
+                # but check by attempting a known-safe query
+                if self._writer:
+                    try:
+                        cmd = f".I{self.levels}1\r"
+                        _LOGGER.debug("TX → %s (keepalive probe)", cmd.strip())
+                        self._writer.write(cmd.encode())
+                        await self._writer.drain()
+                        self.stats.messages_sent += 1
+                    except OSError:
+                        break
                 continue
 
             if not raw:
-                _LOGGER.warning("Router closed connection (EOF)")
-                break
+                continue
 
             line = raw.decode(errors="replace").strip()
             if not line:
