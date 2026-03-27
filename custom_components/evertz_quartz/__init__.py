@@ -97,20 +97,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Load port maps (Order → Quartz Port Number) — needed for non-contiguous profiles
     src_port_map = {int(k): v for k, v in entry.data.get("source_port_map", {}).items()}
     dst_port_map = {int(k): v for k, v in entry.data.get("destination_port_map", {}).items()}
-
-    hass.data[DOMAIN][entry.entry_id]["src_port_map"] = src_port_map
-    hass.data[DOMAIN][entry.entry_id]["dst_port_map"] = dst_port_map
     if src_port_map:
         _LOGGER.debug("Loaded source port map (%d entries)", len(src_port_map))
     if dst_port_map:
         _LOGGER.debug("Loaded destination port map (%d entries)", len(dst_port_map))
 
+    # Build the entry data dict in one shot — port maps must be present
+    # before async_forward_entry_setups so select entities can read them
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,
         "route_listeners": route_listeners,
         "mnemonic_listeners": mnemonic_listeners,
-        "src_port_map": {},
-        "dst_port_map": {},
+        "src_port_map": src_port_map,
+        "dst_port_map": dst_port_map,
     }
 
     await client.start()
