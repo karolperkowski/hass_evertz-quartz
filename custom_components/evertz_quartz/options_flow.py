@@ -86,27 +86,21 @@ def _build_diff_summary(
         changes.append(f"Max Destinations: {cur_dst} → {result.max_destinations}")
         reload_needed = True
 
-    # Name counts
+    # Names — always show as a change when CSV provides them,
+    # even if the count is the same (names may have been updated on the router)
     new_src_names = len(result.source_names)
     new_dst_names = len(result.destination_names)
     old_src_names = len(cur_src_names)
-    old_dst_names = len(cur_dst_names)
 
     if new_src_names > 0:
         changes.append(
             f"Source names: {old_src_names} → {new_src_names} "
-            f"(max port {result.max_sources})"
+            f"(max Order {result.max_sources})"
         )
     if new_dst_names > 0:
         changes.append(
-            f"Destination names: {old_dst_names} → {new_dst_names} "
-            f"(max port {result.max_destinations})"
-        )
-
-    if result.has_port_gaps:
-        changes.append(
-            "Non-contiguous port numbering detected (Order ≠ Port Number for some entries). "
-            "Routing will use the correct Quartz port addresses automatically."
+            f"Destination names: {len(cur_dst_names)} → {new_dst_names} "
+            f"(max Order {result.max_destinations})"
         )
 
     if result.hidden_sources or result.hidden_destinations:
