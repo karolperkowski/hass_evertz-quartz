@@ -40,7 +40,6 @@ CONF_CSV_UPLOAD = "csv_upload"
 
 
 async def _validate_connection(host: str, port: int) -> None:
-    """Open and immediately close a TCP connection to verify reachability."""
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port), timeout=10
@@ -53,11 +52,11 @@ async def _validate_connection(host: str, port: int) -> None:
 
 def _parse_uploaded_csv(hass, upload_id: str) -> tuple[dict, list[str]]:
     """
-    Read the uploaded file, parse it, return (fields_to_override, warnings).
-    fields_to_override is a partial dict with any of:
-        max_sources, max_destinations, source_names, destination_names
-    Only sides that have data in the CSV are included — an SRC-only export
-    will never touch destination counts.
+    Read the uploaded file and parse it.
+    Returns (overrides_dict, warnings) where overrides contains any of:
+        max_sources, max_destinations, source_names, destination_names,
+        source_port_map, destination_port_map
+    Only sides with data are included (SRC-only export won't touch destinations).
     """
     try:
         with process_uploaded_file(hass, upload_id) as file_path:
@@ -71,30 +70,33 @@ def _parse_uploaded_csv(hass, upload_id: str) -> tuple[dict, list[str]]:
 
     overrides: dict = {}
     if result.max_sources > 0:
-        overrides[CONF_MAX_SOURCES] = result.max_sources
-        overrides["source_names"] = result.source_names
+        overrides[CONF_MAX_SOURCES]      = result.max_sources
+        overrides["source_names"]        = result.source_names
+        overrides["source_port_map"]     = result.source_port_map
     if result.max_destinations > 0:
         overrides[CONF_MAX_DESTINATIONS] = result.max_destinations
-        overrides["destination_names"] = result.destination_names
+        overrides["destination_names"]   = result.destination_names
+        overrides["destination_port_map"]= result.destination_port_map
 
     warnings = list(result.warnings)
+    if result.has_port_gaps:
+        warnings.append(
+            f"Non-contiguous port numbering detected "
+            f"(Order ≠ Port Number for some rows). "
+            f"Routing will use the correct Quartz port addresses."
+        )
     if result.hidden_sources or result.hidden_destinations:
         warnings.append(
             f"{result.hidden_sources} hidden source(s) and "
-            f"{result.hidden_destinations} hidden destination(s) "
-            f"present in CSV but excluded from profile."
+            f"{result.hidden_destinations} hidden destination(s) skipped."
         )
 
-    _LOGGER.info(
-        "CSV uploaded (%s): %s",
-        result.format_detected,
-        result.summary,
-    )
+    _LOGGER.info("CSV uploaded (%s): %s", result.format_detected, result.summary)
     return overrides, warnings
 
 
 class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Two-step config flow: connection details → profile / CSV upload."""
+    """Two-step config flow: connection → profile/CSV."""
 
     VERSION = 1
 
@@ -102,18 +104,18 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._host: str = ""
         self._port: int = DEFAULT_PORT
         self._router_name: str = ""
-        # Profile data — populated from CSV or left at defaults
         self._max_sources: int = DEFAULT_MAX_SOURCES
         self._max_destinations: int = DEFAULT_MAX_DESTINATIONS
         self._levels: str = DEFAULT_LEVELS
-        self._source_names: dict[int, str] = {}
-        self._destination_names: dict[int, str] = {}
+        self._source_names: dict = {}
+        self._destination_names: dict = {}
+        self._source_port_map: dict = {}
+        self._destination_port_map: dict = {}
         self._csv_warnings: list[str] = []
 
     # ── Step 1: connection ────────────────────────────────────────────────
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
-        """Host, port, optional router name.  Validates TCP connectivity."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -128,31 +130,25 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 self._host = host
                 self._port = port
-                self._router_name = name or host   # fall back to IP
+                self._router_name = name or host
                 return await self.async_step_profile()
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
-                vol.Required(CONF_HOST): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.TEXT)
-                ),
+                vol.Required(CONF_HOST): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
                 vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
-                vol.Optional(CONF_NAME, default=""): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.TEXT)
-                ),
+                vol.Optional(CONF_NAME, default=""): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
             }),
             errors=errors,
         )
 
-    # ── Step 2: profile / CSV ────────────────────────────────────────────
+    # ── Step 2: profile / CSV ─────────────────────────────────────────────
 
     async def async_step_profile(self, user_input: dict | None = None) -> FlowResult:
-        """Max sources, destinations, levels, optional CSV file upload."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Process CSV upload if provided
             upload_id = user_input.get(CONF_CSV_UPLOAD)
             if upload_id:
                 overrides, warnings = await self.hass.async_add_executor_job(
@@ -164,29 +160,32 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     self._csv_warnings = warnings
                     if CONF_MAX_SOURCES in overrides:
-                        self._max_sources = overrides[CONF_MAX_SOURCES]
-                        self._source_names = overrides.get("source_names", {})
+                        self._max_sources         = overrides[CONF_MAX_SOURCES]
+                        self._source_names        = overrides.get("source_names", {})
+                        self._source_port_map     = overrides.get("source_port_map", {})
                     if CONF_MAX_DESTINATIONS in overrides:
-                        self._max_destinations = overrides[CONF_MAX_DESTINATIONS]
-                        self._destination_names = overrides.get("destination_names", {})
-                    # Re-show form with populated values so user can review
+                        self._max_destinations     = overrides[CONF_MAX_DESTINATIONS]
+                        self._destination_names    = overrides.get("destination_names", {})
+                        self._destination_port_map = overrides.get("destination_port_map", {})
                     if not errors:
+                        # Re-show with populated values for review
                         return await self.async_step_profile()
 
             if not errors:
+                # Serialize port maps with string keys for JSON storage
                 data = {
-                    CONF_HOST: self._host,
-                    CONF_PORT: self._port,
-                    CONF_NAME: self._router_name,
-                    CONF_MAX_SOURCES: user_input.get(CONF_MAX_SOURCES, self._max_sources),
+                    CONF_HOST:             self._host,
+                    CONF_PORT:             self._port,
+                    CONF_NAME:             self._router_name,
+                    CONF_MAX_SOURCES:      user_input.get(CONF_MAX_SOURCES, self._max_sources),
                     CONF_MAX_DESTINATIONS: user_input.get(CONF_MAX_DESTINATIONS, self._max_destinations),
-                    CONF_LEVELS: user_input.get(CONF_LEVELS, self._levels),
-                    # Store names in data so they survive reloads
-                    "source_names": self._source_names,
-                    "destination_names": self._destination_names,
+                    CONF_LEVELS:           user_input.get(CONF_LEVELS, self._levels),
+                    "source_names":        {str(k): v for k, v in self._source_names.items()},
+                    "destination_names":   {str(k): v for k, v in self._destination_names.items()},
+                    "source_port_map":     {str(k): v for k, v in self._source_port_map.items()},
+                    "destination_port_map":{str(k): v for k, v in self._destination_port_map.items()},
                 }
-                title = self._router_name
-                return self.async_create_entry(title=title, data=data)
+                return self.async_create_entry(title=self._router_name, data=data)
 
         return self.async_show_form(
             step_id="profile",
@@ -194,9 +193,7 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_MAX_SOURCES,      default=self._max_sources):      vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
                 vol.Required(CONF_MAX_DESTINATIONS, default=self._max_destinations): vol.All(int, vol.Range(min=1, max=_MAX_SIZE)),
                 vol.Required(CONF_LEVELS,           default=self._levels):           str,
-                vol.Optional(CONF_CSV_UPLOAD): FileSelector(
-                    FileSelectorConfig(accept=".csv,text/csv")
-                ),
+                vol.Optional(CONF_CSV_UPLOAD): FileSelector(FileSelectorConfig(accept=".csv,text/csv")),
             }),
             errors=errors,
             description_placeholders={

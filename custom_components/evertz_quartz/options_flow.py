@@ -100,6 +100,12 @@ def _build_diff_summary(
             f"(max port {result.max_destinations})"
         )
 
+    if result.has_port_gaps:
+        changes.append(
+            "Non-contiguous port numbering detected (Order ≠ Port Number for some entries). "
+            "Routing will use the correct Quartz port addresses automatically."
+        )
+
     if result.hidden_sources or result.hidden_destinations:
         changes.append(
             f"Hidden ports: {result.hidden_sources} src, "
@@ -205,6 +211,8 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                     settings,
                     source_names=result.source_names if result.max_sources > 0 else None,
                     destination_names=result.destination_names if result.max_destinations > 0 else None,
+                    source_port_map=result.source_port_map if result.max_sources > 0 else None,
+                    destination_port_map=result.destination_port_map if result.max_destinations > 0 else None,
                 )
             else:
                 # Cancelled — go back to init form
@@ -246,10 +254,12 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         settings: dict,
         source_names: dict[int, str] | None = None,
         destination_names: dict[int, str] | None = None,
+        source_port_map: dict[int, int] | None = None,
+        destination_port_map: dict[int, int] | None = None,
     ) -> FlowResult:
         """
         Apply validated settings to the running client and save options.
-        source_names / destination_names are optional CSV-sourced overrides.
+        source_names / destination_names / port_maps are optional CSV-sourced overrides.
         """
         client = (
             self.hass.data.get(DOMAIN, {})
@@ -304,12 +314,16 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
 
         # ── Persist names into entry.data via hass.config_entries ────────
         # Names go into data (not options) so they survive options resets
-        if source_names or destination_names:
+        if source_names or destination_names or source_port_map or destination_port_map:
             new_data = dict(self._entry.data)
             if source_names:
-                new_data["source_names"] = {**new_data.get("source_names", {}), **source_names}
+                new_data["source_names"] = {str(k): v for k, v in source_names.items()}
             if destination_names:
-                new_data["destination_names"] = {**new_data.get("destination_names", {}), **destination_names}
+                new_data["destination_names"] = {str(k): v for k, v in destination_names.items()}
+            if source_port_map:
+                new_data["source_port_map"] = {str(k): v for k, v in source_port_map.items()}
+            if destination_port_map:
+                new_data["destination_port_map"] = {str(k): v for k, v in destination_port_map.items()}
             self.hass.config_entries.async_update_entry(self._entry, data=new_data)
 
         result = self.async_create_entry(title="", data=settings)

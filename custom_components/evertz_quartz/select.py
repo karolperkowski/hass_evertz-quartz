@@ -11,10 +11,8 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    CONF_LEVELS,
     CONF_MAX_DESTINATIONS,
     CONF_MAX_SOURCES,
-    DEFAULT_LEVELS,
     DEFAULT_MAX_DESTINATIONS,
     DEFAULT_MAX_SOURCES,
     DOMAIN,
@@ -40,9 +38,15 @@ def _effective(entry: ConfigEntry, key: str, default):
     return entry.data.get(key, default)
 
 
-def _router_display_name(entry: ConfigEntry) -> str:
-    from . import _router_display_name as _rdn
-    return _rdn(entry)
+def _device_info(entry: ConfigEntry) -> DeviceInfo:
+    from . import _router_display_name
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=_router_display_name(entry),
+        manufacturer="Evertz",
+        model="EQX / EQT Router",
+        configuration_url=f"http://{entry.data.get('host', '')}",
+    )
 
 
 def _current_log_level() -> str:
@@ -51,30 +55,29 @@ def _current_log_level() -> str:
     return name if name in _LOG_LEVELS else _DEFAULT_LOG_LEVEL
 
 
-def _device_info(entry: ConfigEntry) -> DeviceInfo:
-    """Shared DeviceInfo keyed to entry_id — router name as device name."""
-    from . import _router_display_name as _rdn
-    return DeviceInfo(
-        identifiers={(DOMAIN, entry.entry_id)},
-        name=_rdn(entry),
-        manufacturer="Evertz",
-        model="EQX / EQT Router",
-        configuration_url=f"http://{entry.data.get('host', '')}",
-    )
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up destination selects + log level control."""
-    client = hass.data[DOMAIN][entry.entry_id]["client"]
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    client = entry_data["client"]
+    src_port_map = entry_data.get("src_port_map", {})   # {order: quartz_port}
+    dst_port_map = entry_data.get("dst_port_map", {})   # {order: quartz_port}
+
     max_destinations = _effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
     max_sources      = _effective(entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES)
 
     entities: list[SelectEntity] = [
-        QuartzDestinationSelect(entry, client, dest, max_sources)
+        QuartzDestinationSelect(
+            entry=entry,
+            client=client,
+            order=dest,
+            quartz_port=dst_port_map.get(dest, dest),   # identity fallback when no map
+            max_sources=max_sources,
+            src_port_map=src_port_map,
+        )
         for dest in range(1, max_destinations + 1)
     ]
     entities.append(QuartzLogLevelSelect(entry))
@@ -82,24 +85,40 @@ async def async_setup_entry(
 
 
 class QuartzDestinationSelect(SelectEntity):
-    """One HA select entity per router destination."""
+    """
+    One HA select entity per router destination.
+
+    self._order      = profile Order index (1-based) — entity unique_id, name fallback
+    self._quartz_port = Quartz crosspoint address   — used in .SV commands + .UV matching
+    These are the same number for contiguous routers, different for tieline/remote sources.
+    """
 
     _attr_should_poll = False
     _attr_has_entity_name = True
 
-    def __init__(self, entry: ConfigEntry, client, destination: int, max_sources: int) -> None:
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        client,
+        order: int,
+        quartz_port: int,
+        max_sources: int,
+        src_port_map: dict[int, int],
+    ) -> None:
         self._entry = entry
         self._client = client
-        self._destination = destination
+        self._order = order
+        self._quartz_port = quartz_port
         self._max_sources = max_sources
-        self._attr_unique_id = f"{entry.entry_id}_dest_{destination}"
+        self._src_port_map = src_port_map  # {src_order: src_quartz_port}
+        self._attr_unique_id = f"{entry.entry_id}_dest_{order}"
 
     @property
     def name(self) -> str:
-        """Destination mnemonic from router, or 'Destination N' fallback."""
+        """Destination name from router mnemonic (keyed by port) or fallback."""
         return (
-            self._client.destination_names.get(self._destination)
-            or f"Destination {self._destination}"
+            self._client.destination_names.get(self._quartz_port)
+            or f"Destination {self._order}"
         )
 
     @property
@@ -108,12 +127,18 @@ class QuartzDestinationSelect(SelectEntity):
 
     @property
     def options(self) -> list[str]:
-        return [self._source_label(i) for i in range(1, self._client.max_sources + 1)]
+        """Source options — uses mnemonic names when available."""
+        return [self._source_label(order) for order in range(1, self._client.max_sources + 1)]
 
     @property
     def current_option(self) -> str | None:
-        src = self._client.routes.get(self._destination)
-        return self._source_label(src) if src is not None else None
+        """Currently routed source, looked up by Quartz port then mapped to display label."""
+        src_port = self._client.routes.get(self._quartz_port)
+        if src_port is None:
+            return None
+        # Find which source order has this port, then display its label
+        src_order = self._port_to_src_order(src_port)
+        return self._source_label(src_order)
 
     @property
     def available(self) -> bool:
@@ -121,20 +146,26 @@ class QuartzDestinationSelect(SelectEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        src = self._client.routes.get(self._destination)
+        src_port = self._client.routes.get(self._quartz_port)
         return {
-            "destination_number": self._destination,
-            "source_number": src,
-            "levels": self._client.levels,
-            "router": self._entry.data.get("router_name") or self._entry.data.get("host", ""),
+            "destination_order":      self._order,
+            "destination_quartz_port":self._quartz_port,
+            "source_quartz_port":     src_port,
+            "levels":                 self._client.levels,
+            "router":                 self._entry.data.get("router_name") or self._entry.data.get("host", ""),
         }
 
     async def async_select_option(self, option: str) -> None:
-        src = self._label_to_source_number(option)
-        if src is None:
-            _LOGGER.warning("Cannot route dest %d: unknown source %r", self._destination, option)
+        """Route: translate display label → source order → Quartz port → send command."""
+        src_order = self._label_to_src_order(option)
+        if src_order is None:
+            _LOGGER.warning(
+                "Cannot route dest order %d (port %d): unknown source %r",
+                self._order, self._quartz_port, option,
+            )
             return
-        await self._client.route(self._destination, src, self._client.levels)
+        src_port = self._src_port_map.get(src_order, src_order)
+        await self._client.route(self._quartz_port, src_port, self._client.levels)
 
     async def async_added_to_hass(self) -> None:
         entry_data = self.hass.data[DOMAIN][self._entry.entry_id]
@@ -142,22 +173,35 @@ class QuartzDestinationSelect(SelectEntity):
         entry_data["mnemonic_listeners"].append(self._on_mnemonic_update)
 
     @callback
-    def _on_route_update(self, dest: int, src: int, levels: str) -> None:
-        if dest == self._destination:
+    def _on_route_update(self, dest_port: int, src_port: int, levels: str) -> None:
+        """Router sent .UV — check if it's our destination's Quartz port."""
+        if dest_port == self._quartz_port:
             self.async_write_ha_state()
 
     @callback
     def _on_mnemonic_update(self) -> None:
         self.async_write_ha_state()
 
-    def _source_label(self, src_num: int) -> str:
-        return self._client.source_names.get(src_num) or f"Source {src_num}"
+    # ── Helpers ───────────────────────────────────────────────────────────
 
-    def _label_to_source_number(self, label: str) -> int | None:
-        for num in range(1, self._client.max_sources + 1):
-            if self._source_label(num) == label:
-                return num
+    def _source_label(self, src_order: int) -> str:
+        """Display name for a source given its profile Order index."""
+        src_port = self._src_port_map.get(src_order, src_order)
+        return self._client.source_names.get(src_port) or f"Source {src_order}"
+
+    def _label_to_src_order(self, label: str) -> int | None:
+        """Reverse-map a display label back to a source Order index."""
+        for order in range(1, self._client.max_sources + 1):
+            if self._source_label(order) == label:
+                return order
         return None
+
+    def _port_to_src_order(self, port: int) -> int:
+        """Map a Quartz source port number back to its profile Order index."""
+        for order, p in self._src_port_map.items():
+            if p == port:
+                return order
+        return port  # identity fallback when no map
 
 
 class QuartzLogLevelSelect(SelectEntity):

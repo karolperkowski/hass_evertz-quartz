@@ -94,10 +94,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         client.destination_names.update({int(k): v for k, v in stored_dst.items()})
         _LOGGER.debug("Loaded %d destination names from stored profile", len(stored_dst))
 
+    # Load port maps (Order → Quartz Port Number) — needed for non-contiguous profiles
+    src_port_map = {int(k): v for k, v in entry.data.get("source_port_map", {}).items()}
+    dst_port_map = {int(k): v for k, v in entry.data.get("destination_port_map", {}).items()}
+
+    hass.data[DOMAIN][entry.entry_id]["src_port_map"] = src_port_map
+    hass.data[DOMAIN][entry.entry_id]["dst_port_map"] = dst_port_map
+    if src_port_map:
+        _LOGGER.debug("Loaded source port map (%d entries)", len(src_port_map))
+    if dst_port_map:
+        _LOGGER.debug("Loaded destination port map (%d entries)", len(dst_port_map))
+
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,
         "route_listeners": route_listeners,
         "mnemonic_listeners": mnemonic_listeners,
+        "src_port_map": {},
+        "dst_port_map": {},
     }
 
     await client.start()
