@@ -183,9 +183,8 @@ class QuartzClient:
             _LOGGER.warning("Error sending .QL queries: %s", err)
             return
 
-        # Wait briefly for responses — any .AV replies handled in _dispatch
-        _LOGGER.debug("Waiting up to %ds for .QL responses", QUARTZ_ROUTE_SYNC_TIMEOUT)
-        await asyncio.sleep(QUARTZ_ROUTE_SYNC_TIMEOUT)
+        # Responses (if any) will be handled by _dispatch in the listen loop.
+        # No blocking wait — MAGNUM does not respond to .QL.
 
     async def query_all_mnemonics(self) -> None:
         """
@@ -256,12 +255,12 @@ class QuartzClient:
     # ── Internal helpers ─────────────────────────────────────────────────
 
     def _tx(self, cmd: str) -> None:
-        if self.client_verbose:
-            _LOGGER.debug("TX → %s", cmd.strip())
+        """Log outgoing command at DEBUG level always."""
+        _LOGGER.debug("TX → %s", cmd.strip())
 
     def _rx(self, line: str) -> None:
-        if self.client_verbose:
-            _LOGGER.debug("RX ← %s", line)
+        """Kept for compatibility — raw RX now logged directly in _listen."""
+        pass
 
     def _on_mnemonic_received(self) -> None:
         self._mnemonics_received += 1
@@ -355,7 +354,9 @@ class QuartzClient:
             if not line:
                 continue
 
-            self._rx(line)
+            # Always log raw received data at DEBUG — no gate needed since
+            # the logger level itself controls visibility
+            _LOGGER.debug("RX ← %r", line)
             self.stats.messages_received += 1
             self._dispatch(line)
 

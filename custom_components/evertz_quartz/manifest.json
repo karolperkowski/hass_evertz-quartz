@@ -1,7 +1,7 @@
 {
   "domain": "evertz_quartz",
   "name": "Evertz Quartz Router",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "integration_type": "hub",
   "documentation": "https://github.com/karolperkowski/hass_evertz-quartz",
   "issue_tracker": "https://github.com/karolperkowski/hass_evertz-quartz/issues",
