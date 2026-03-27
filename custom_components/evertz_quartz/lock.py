@@ -91,12 +91,25 @@ class QuartzDestinationLock(LockEntity):
         lock_val  = self._client.locks.get(self._order, 0)
         dest_name = self._client.destination_names.get(self._order)
         dest_ns   = self._client.destination_namespaces.get(self._order)
+        # AN65 lock value semantics:
+        #   0       = unlocked
+        #   1-254   = locked by a hardware panel at Q-link address (n-1)
+        #             .BU may not clear this — must be released from the panel
+        #   255     = unprotected software lock (set via .BL command)
+        if lock_val == 0:
+            lock_type = "unlocked"
+        elif lock_val == 255:
+            lock_type = "software"        # set by .BL, clearable by .BU
+        else:
+            lock_type = f"panel:{lock_val}"  # hardware panel lock, Q-link addr {lock_val-1}
+
         return {
             "destination_order":     self._order,
             "destination_name":      dest_name or f"Destination {self._order}",
             "destination_namespace": dest_ns,
             "lock_value":            lock_val,
-            "lock_level":            "full" if lock_val == 255 else ("partial" if lock_val > 0 else "none"),
+            "lock_type":             lock_type,
+            "panel_clearable":       lock_val == 255,  # only software locks can be cleared remotely
         }
 
     async def async_lock(self, **kwargs) -> None:
@@ -107,10 +120,23 @@ class QuartzDestinationLock(LockEntity):
         await self._client.lock_destination(self._order)
 
     async def async_unlock(self, **kwargs) -> None:
-        """Unlock this destination via .BU command."""
+        """
+        Unlock this destination via .BU command.
+        Note: if lock_value is 1-254, this is a panel lock set by a hardware Q-link panel.
+        .BU may not clear it — the panel itself must release the lock.
+        """
         rname     = router_display_name(self._entry)
         dest_name = self._client.destination_names.get(self._order, f"Dest {self._order}")
-        _LOGGER.info("[%s] Unlocking destination %s (Order %d)", rname, dest_name, self._order)
+        lock_val  = self._client.locks.get(self._order, 0)
+        if 0 < lock_val < 255:
+            _LOGGER.warning(
+                "[%s] Unlock attempted on %s (Order %d) but lock_value=%d indicates "
+                "a hardware panel lock (Q-link address %d). .BU may not clear it — "
+                "the panel at that address must release the lock.",
+                rname, dest_name, self._order, lock_val, lock_val - 1,
+            )
+        else:
+            _LOGGER.info("[%s] Unlocking destination %s (Order %d)", rname, dest_name, self._order)
         await self._client.unlock_destination(self._order)
 
     async def async_added_to_hass(self) -> None:
