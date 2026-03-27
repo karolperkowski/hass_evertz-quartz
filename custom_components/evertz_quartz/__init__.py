@@ -86,11 +86,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = QuartzClient(
         host=entry.data[CONF_HOST],
         port=entry.data[CONF_PORT],
-        max_sources=_effective(entry, CONF_MAX_SOURCES,     DEFAULT_MAX_SOURCES),
+        max_sources=_effective(entry, CONF_MAX_SOURCES,      DEFAULT_MAX_SOURCES),
         max_destinations=_effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS),
-        levels=_effective(entry, CONF_LEVELS,           DEFAULT_LEVELS),
-        src_port_map=src_port_map or None,
-        dst_port_map=dst_port_map or None,
+        levels=_effective(entry, CONF_LEVELS,            DEFAULT_LEVELS),
         csv_loaded=csv_loaded,
         route_callback=_route_callback,
         mnemonic_callback=_mnemonic_callback,
@@ -100,9 +98,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         reconnect_delay=_effective(entry, CONF_RECONNECT_DELAY,  DEFAULT_RECONNECT_DELAY),
         connect_timeout=_effective(entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT),
     )
+    # Store port maps in client for diagnostics/reference — not used in protocol commands
+    client.src_port_map = src_port_map
+    client.dst_port_map = dst_port_map
 
-    # Load names from entry.data — source of truth when CSV is loaded
-    # These are transient in client memory; stored in entry.data only when CSV provides them
+    # Load names from entry.data — only when CSV is loaded
+    # Names are keyed by Order (MAGNUM numbering), not Quartz Port Number
     if csv_loaded:
         if stored_src := entry.data.get("source_names"):
             client.source_names.update({int(k): v for k, v in stored_src.items()})

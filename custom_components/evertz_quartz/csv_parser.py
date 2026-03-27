@@ -154,12 +154,12 @@ def _parse_magnum_profile(text: str) -> ParseResult | None:
         if kind == "SRC":
             if hidden:
                 hidden_src += 1
-            src_names[port] = name or f"Source {order}"
-            src_port_map[order] = port
+            src_names[order] = name or f"Source {order}"   # keyed by Order (MAGNUM uses Order)
+            src_port_map[order] = port                      # kept for reference only
         elif kind in ("DST", "DEST", "DESTINATION"):
             if hidden:
                 hidden_dst += 1
-            dst_names[port] = name or f"Destination {order}"
+            dst_names[order] = name or f"Destination {order}"  # keyed by Order
             dst_port_map[order] = port
         else:
             warnings.append(f"Row {row_num}: unknown type {kind!r}, skipped")
