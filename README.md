@@ -148,20 +148,24 @@ Press the **Clear CSV Profile** button on the device card to revert to querying 
 
 ## Lovelace Card (`custom:evertz-quartz-card`)
 
-A purpose-built card for controlling the router directly from your dashboard — no third-party HACS frontend dependencies required.
+The dashboard card lives in its own repository and is installed separately via HACS:
+
+**[lovelace-evertz-quartz](https://github.com/karolperkowski/lovelace-evertz-quartz)**
 
 ### Installing the card
 
-**Step 1** — Add the JS resource to HA:
+**Step 1** — Add the card repo to HACS:
+
+HACS → Dashboard → ⋮ → Custom repositories → add `https://github.com/karolperkowski/lovelace-evertz-quartz` as category **Dashboard** → Download
+
+**Step 2** — Add the JS resource:
 
 Go to **Settings → Dashboards → Resources** (three-dot menu) → **Add Resource**:
 
 ```
-URL:  /hacsfiles/hass_evertz-quartz/evertz-quartz-card.js
+URL:  /hacsfiles/lovelace-evertz-quartz/evertz-quartz.js
 Type: JavaScript Module
 ```
-
-Or manually copy `dist/evertz-quartz-card.js` to your `/config/www/` folder and use `/local/evertz-quartz-card.js` as the URL.
 
 **Step 2** — Add to your dashboard:
 
