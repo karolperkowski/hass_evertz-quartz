@@ -82,11 +82,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "notification_id": f"evertz_quartz_{entry.entry_id}_profile_mismatch",
                     "title": f"Evertz Quartz [{rname}] — Profile Mismatch",
                     "message": (
-                        f"The router reported {label} Order **{order}** which is outside "
-                        f"the configured range (current maximum: {limit}).\n\n"
-                        "Your router profile may have expanded or changed. "
-                        "Update the profile to fix this.\n\n"
-                        "[**Open Configure →**](/config/integrations/integration/evertz_quartz)"
+                        f"**Router:** {rname}\n\n"
+                        f"The router reported {label} Order **{order}**, which is outside "
+                        f"the configured range (current maximum: **{limit}**). "
+                        f"The router profile has likely expanded or changed.\n\n"
+                        "**To fix this:**\n"
+                        "1. Click [**Open Configure \u2192**]"
+                        "(/config/integrations/integration/evertz_quartz) "
+                        f"to go to the Evertz Quartz integrations page\n"
+                        f"2. Find **{rname}** and click the \u2699\ufe0f **gear icon** (Configure)\n"
+                        "3. The *Connection Settings* page opens — click **Next** "
+                        "(no changes needed on this page)\n"
+                        "4. On the *Update Profile* page, either:\n"
+                        "   - Upload a new `profile_availability.csv`, **or**\n"
+                        "   - Increase **Max Sources** / **Max Destinations** manually\n"
+                        "5. Click **Submit** — the integration will reload automatically\n\n"
+                        "\u2139\ufe0f The profile mismatch sensor will clear once the reload completes."
                     ),
                 },
             )
