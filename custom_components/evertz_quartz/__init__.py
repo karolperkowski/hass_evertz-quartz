@@ -81,10 +81,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "message": (
                         f"The router reported {label} Order **{order}** which is outside "
                         f"the configured range (current maximum: {limit}).\n\n"
-                        "Your router profile may have expanded or changed.\n\n"
-                        "**To fix:** Go to Settings \u2192 Devices & Services \u2192 "
-                        "Evertz Quartz \u2192 Configure and select **Update Profile** "
-                        "to re-import your CSV or adjust the counts manually."
+                        "Your router profile may have expanded or changed. "
+                        "Update the profile to fix this.\n\n"
+                        f"[**Open Configure →**](/config/integrations/options_flow/{entry.entry_id})"
                     ),
                 },
             )
