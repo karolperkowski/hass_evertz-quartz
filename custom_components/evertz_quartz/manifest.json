@@ -1,7 +1,7 @@
 {
   "domain": "evertz_quartz",
   "name": "Evertz Quartz Router",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "integration_type": "hub",
   "documentation": "https://github.com/karolperkowski/hass_evertz-quartz",
   "issue_tracker": "https://github.com/karolperkowski/hass_evertz-quartz/issues",
@@ -14,6 +14,7 @@
     "custom_components.evertz_quartz",
     "custom_components.evertz_quartz.quartz_client",
     "custom_components.evertz_quartz.select",
+    "custom_components.evertz_quartz.button",
     "custom_components.evertz_quartz.config_flow",
     "custom_components.evertz_quartz.options_flow"
   ]

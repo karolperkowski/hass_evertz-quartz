@@ -59,6 +59,30 @@
       }
     }
   },
+  "entity": {
+    "select": {
+      "log_level": {
+        "name": "Log Level",
+        "state": {
+          "DEBUG":   "Debug",
+          "INFO":    "Info",
+          "WARNING": "Warning",
+          "ERROR":   "Error"
+        }
+      }
+    },
+    "button": {
+      "resync_full": {
+        "name": "Resync All"
+      },
+      "resync_routes": {
+        "name": "Resync Routes"
+      },
+      "resync_names": {
+        "name": "Resync Names"
+      }
+    }
+  },
   "services": {
     "route": {
       "name": "Route Source to Destination",

@@ -167,3 +167,43 @@ To download it: **Settings → Devices & Services → Evertz Quartz Router → �
 | **Connection timeout** | 10s | Max time to establish the initial TCP connection |
 
 All options apply immediately — no Home Assistant restart required.
+
+---
+
+## Entities
+
+### Routing (per destination)
+
+| Entity | Type | Description |
+|---|---|---|
+| `select.destination_N` | Select | Routes a source to this destination. Options list uses mnemonic names when available. |
+
+### Diagnostic entities
+
+These appear under the device card in Settings → Devices & Services and are also available in automations and dashboards.
+
+| Entity | Type | Description |
+|---|---|---|
+| `select.log_level` | Select | Set the integration log level: **Debug / Info / Warning / Error**. Takes effect instantly — no restart or `configuration.yaml` edit needed. |
+| `button.resync_all` | Button | Re-polls both mnemonic names and current routes from the router. |
+| `button.resync_routes` | Button | Re-polls current crosspoint state only. |
+| `button.resync_names` | Button | Re-polls source and destination names only. |
+
+### When to use each resync button
+
+- **Resync All** — after a router config change (new sources/destinations, renamed ports)
+- **Resync Routes** — if HA state gets out of sync (e.g. after a reconnect)
+- **Resync Names** — if mnemonic labels changed on the router but routes are correct
+
+### Log Level
+
+The **Log Level** select entity lets you change the verbosity of the integration without editing `configuration.yaml`:
+
+| Level | Use |
+|---|---|
+| **Warning** (default) | Normal operation — only problems logged |
+| **Info** | Connection events, resync actions, option changes |
+| **Debug** | Mnemonic parsing, route change detail, keepalives |
+| **Debug** + Verbose TCP | Every raw `.SV` / `.UV` / `.A` frame logged (set Verbose TCP in Configure) |
+
+> The level resets to `Warning` on HA restart. For a permanent setting, add the `logger` block to `configuration.yaml` as described in the Debug section above.

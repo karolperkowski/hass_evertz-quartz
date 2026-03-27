@@ -31,7 +31,7 @@ from .quartz_client import QuartzClient
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SELECT]
+PLATFORMS: list[Platform] = [Platform.SELECT, Platform.BUTTON]
 
 ATTR_DESTINATION = "destination"
 ATTR_SOURCE = "source"
