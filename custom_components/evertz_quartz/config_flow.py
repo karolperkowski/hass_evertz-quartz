@@ -71,13 +71,15 @@ def _parse_uploaded_csv(hass, upload_id: str) -> tuple[dict, list[str]]:
 
     overrides: dict = {}
     if result.max_sources > 0:
-        overrides[CONF_MAX_SOURCES]      = result.max_sources
-        overrides["source_names"]        = result.source_names
-        overrides["source_port_map"]     = result.source_port_map
+        overrides[CONF_MAX_SOURCES]           = result.max_sources
+        overrides["source_names"]             = result.source_names
+        overrides["source_port_map"]          = result.source_port_map
+        overrides["source_namespaces"]        = result.source_namespaces
     if result.max_destinations > 0:
-        overrides[CONF_MAX_DESTINATIONS] = result.max_destinations
-        overrides["destination_names"]   = result.destination_names
-        overrides["destination_port_map"]= result.destination_port_map
+        overrides[CONF_MAX_DESTINATIONS]       = result.max_destinations
+        overrides["destination_names"]         = result.destination_names
+        overrides["destination_port_map"]      = result.destination_port_map
+        overrides["destination_namespaces"]    = result.destination_namespaces
 
     warnings = list(result.warnings)
     if result.has_port_gaps:
@@ -112,6 +114,8 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._destination_names: dict = {}
         self._source_port_map: dict = {}
         self._destination_port_map: dict = {}
+        self._source_namespaces: dict = {}
+        self._destination_namespaces: dict = {}
         self._csv_warnings: list[str] = []
 
     # ── Step 1: connection ────────────────────────────────────────────────
@@ -161,29 +165,33 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     self._csv_warnings = warnings
                     if CONF_MAX_SOURCES in overrides:
-                        self._max_sources         = overrides[CONF_MAX_SOURCES]
-                        self._source_names        = overrides.get("source_names", {})
-                        self._source_port_map     = overrides.get("source_port_map", {})
+                        self._max_sources          = overrides[CONF_MAX_SOURCES]
+                        self._source_names         = overrides.get("source_names", {})
+                        self._source_port_map      = overrides.get("source_port_map", {})
+                        self._source_namespaces    = overrides.get("source_namespaces", {})
                     if CONF_MAX_DESTINATIONS in overrides:
-                        self._max_destinations     = overrides[CONF_MAX_DESTINATIONS]
-                        self._destination_names    = overrides.get("destination_names", {})
-                        self._destination_port_map = overrides.get("destination_port_map", {})
+                        self._max_destinations      = overrides[CONF_MAX_DESTINATIONS]
+                        self._destination_names     = overrides.get("destination_names", {})
+                        self._destination_port_map  = overrides.get("destination_port_map", {})
+                        self._destination_namespaces = overrides.get("destination_namespaces", {})
                     if not errors:
                         # CSV parsed — save immediately using CSV values + any
                         # other fields the user already filled in on the form
                         csv_was_uploaded = True
                         data = {
-                            CONF_HOST:              self._host,
-                            CONF_PORT:              self._port,
-                            CONF_NAME:              self._router_name,
-                            CONF_MAX_SOURCES:       self._max_sources,
-                            CONF_MAX_DESTINATIONS:  self._max_destinations,
-                            CONF_LEVELS:            user_input.get(CONF_LEVELS, self._levels),
-                            CONF_CSV_LOADED:        True,
-                            "source_port_map":      {str(k): v for k, v in self._source_port_map.items()},
-                            "destination_port_map": {str(k): v for k, v in self._destination_port_map.items()},
-                            "source_names":         {str(k): v for k, v in self._source_names.items()},
-                            "destination_names":    {str(k): v for k, v in self._destination_names.items()},
+                            CONF_HOST:                self._host,
+                            CONF_PORT:                self._port,
+                            CONF_NAME:                self._router_name,
+                            CONF_MAX_SOURCES:         self._max_sources,
+                            CONF_MAX_DESTINATIONS:    self._max_destinations,
+                            CONF_LEVELS:              user_input.get(CONF_LEVELS, self._levels),
+                            CONF_CSV_LOADED:          True,
+                            "source_port_map":        {str(k): v for k, v in self._source_port_map.items()},
+                            "destination_port_map":   {str(k): v for k, v in self._destination_port_map.items()},
+                            "source_names":           {str(k): v for k, v in self._source_names.items()},
+                            "destination_names":      {str(k): v for k, v in self._destination_names.items()},
+                            "source_namespaces":      {str(k): v for k, v in self._source_namespaces.items()},
+                            "destination_namespaces": {str(k): v for k, v in self._destination_namespaces.items()},
                         }
                         return self.async_create_entry(title=self._router_name, data=data)
 

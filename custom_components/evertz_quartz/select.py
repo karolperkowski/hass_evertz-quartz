@@ -88,9 +88,25 @@ class QuartzDestinationSelect(SelectEntity):
 
     @property
     def options(self) -> list[str]:
+        dest_ns = self._client.destination_namespaces.get(self._order)
+        has_ns_data = bool(self._client.source_namespaces)
+
+        if dest_ns and has_ns_data:
+            # Filter sources to same namespace only
+            valid = sorted(
+                o for o, ns in self._client.source_namespaces.items()
+                if ns == dest_ns
+            )
+        elif not dest_ns and has_ns_data:
+            # Destination has no namespace — fail open (show all), log once at startup
+            valid = list(range(1, self._client.max_sources + 1))
+        else:
+            # No namespace data at all — show everything (no CSV or non-MAGNUM)
+            valid = list(range(1, self._client.max_sources + 1))
+
         return [
             self._client.source_names.get(i) or f"Source {i}"
-            for i in range(1, self._client.max_sources + 1)
+            for i in valid
         ]
 
     @property
@@ -107,13 +123,18 @@ class QuartzDestinationSelect(SelectEntity):
     @property
     def extra_state_attributes(self) -> dict:
         src_order = self._client.routes.get(self._order)
+        dest_ns   = self._client.destination_namespaces.get(self._order)
+        src_ns    = self._client.source_namespaces.get(src_order) if src_order else None
         return {
             "router":            self._entry.data.get("router_name") or self._entry.data.get("host", ""),
             "host":              self._entry.data.get("host", ""),
             "port":              self._entry.data.get("port", ""),
             "connected":         self._client._connected,  # noqa: SLF001
             "destination_order": self._order,
+            "destination_namespace": dest_ns,
             "source_order":      src_order,
+            "source_namespace":  src_ns,
+            "namespace_filter":  dest_ns or "none",
             "levels":            self._client.levels,
             "max_sources":       self._client.max_sources,
             "max_destinations":  self._client.max_destinations,
@@ -121,15 +142,51 @@ class QuartzDestinationSelect(SelectEntity):
         }
 
     async def async_select_option(self, option: str) -> None:
-        """Find source Order by label and route."""
+        """Find source Order by label, check namespace, and route."""
         src_order = next(
             (i for i in range(1, self._client.max_sources + 1)
              if (self._client.source_names.get(i) or f"Source {i}") == option),
             None,
         )
         if src_order is None:
-            _LOGGER.warning("Cannot route dest %d: unknown source %r", self._order, option)
+            _LOGGER.warning(
+                "[%s] Cannot route dest Order=%d: unknown source %r",
+                self._entry.data.get("router_name", ""), self._order, option,
+            )
             return
+
+        # ── Namespace check ──────────────────────────────────────────────────
+        dest_ns = self._client.destination_namespaces.get(self._order)
+        src_ns  = self._client.source_namespaces.get(src_order)
+
+        if dest_ns and src_ns and dest_ns != src_ns:
+            rname    = self._entry.data.get("router_name", self._entry.data.get("host", ""))
+            dest_name = self._client.destination_names.get(self._order, f"Dest {self._order}")
+            _LOGGER.warning(
+                "[%s] Cross-namespace route BLOCKED: source %r (namespace=%s) "
+                "→ destination %s (namespace=%s). "
+                "These belong to different physical routers.",
+                rname, option, src_ns, dest_name, dest_ns,
+            )
+            # Fire persistent notification (keyed per entry so it replaces itself)
+            notif_id = f"evertz_quartz_{self._entry.entry_id}_cross_namespace"
+            self.hass.async_create_task(
+                self.hass.services.async_call(
+                    "persistent_notification", "create", {
+                        "notification_id": notif_id,
+                        "title": f"Evertz Quartz [{rname}] — Cross-Namespace Route Blocked",
+                        "message": (
+                            f"**Route blocked:** `{option}` (namespace: **{src_ns}**)"
+                            f" → `{dest_name}` (namespace: **{dest_ns}**)\n\n"
+                            "These sources and destinations belong to different physical "
+                            "routers and cannot be cross-routed.\n\n"
+                            f"Only **{dest_ns}** sources are valid for `{dest_name}`."
+                        ),
+                    }
+                )
+            )
+            return  # Do NOT route
+
         await self._client.route(self._order, src_order, self._client.levels)
 
     async def async_added_to_hass(self) -> None:

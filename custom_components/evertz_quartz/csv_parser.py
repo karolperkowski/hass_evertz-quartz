@@ -45,7 +45,11 @@ class ParseResult:
     # Identity mapping ({1:1, 2:2, …}) when Order == Port for all rows
     source_port_map: dict[int, int]
     destination_port_map: dict[int, int]
-    format_detected: str
+    # Keyed by Order → Device Short Name (namespace identifier)
+    # Only populated for MAGNUM profile_availability format
+    source_namespaces: dict[int, str] = field(default_factory=dict)
+    destination_namespaces: dict[int, str] = field(default_factory=dict)
+    format_detected: str = ""
     hidden_sources: int = 0
     hidden_destinations: int = 0
     warnings: list[str] = field(default_factory=list)
@@ -126,13 +130,17 @@ def _parse_magnum_profile(text: str) -> ParseResult | None:
         name_col   = next(i for i, h in enumerate(header) if h == "global name")
         order_col  = next(i for i, h in enumerate(header) if h == "order")
         hidden_col = next((i for i, h in enumerate(header) if "hidden" in h), None)
+        # Device Short Name column — identifies the physical router namespace
+        short_col  = next((i for i, h in enumerate(header) if "device short name" in h or h == "short name"), None)
     except StopIteration:
         return None
 
-    src_names: dict[int, str] = {}          # port → name
-    dst_names: dict[int, str] = {}          # port → name
+    src_names: dict[int, str] = {}          # order → name
+    dst_names: dict[int, str] = {}          # order → name
     src_port_map: dict[int, int] = {}       # order → port
     dst_port_map: dict[int, int] = {}       # order → port
+    src_ns: dict[int, str] = {}             # order → Device Short Name
+    dst_ns: dict[int, str] = {}             # order → Device Short Name
     hidden_src = hidden_dst = 0
     warnings: list[str] = []
 
@@ -142,11 +150,12 @@ def _parse_magnum_profile(text: str) -> ParseResult | None:
         row = [c.strip() for c in row]
 
         try:
-            kind   = row[type_col].upper()
-            port   = int(row[port_col])
-            name   = row[name_col] if name_col < len(row) else ""
-            order  = int(row[order_col]) if order_col < len(row) else port
-            hidden = int(row[hidden_col]) if hidden_col is not None and hidden_col < len(row) else 0
+            kind      = row[type_col].upper()
+            port      = int(row[port_col])
+            name      = row[name_col] if name_col < len(row) else ""
+            order     = int(row[order_col]) if order_col < len(row) else port
+            hidden    = int(row[hidden_col]) if hidden_col is not None and hidden_col < len(row) else 0
+            namespace = row[short_col].strip() if short_col is not None and short_col < len(row) else ""
         except (IndexError, ValueError) as err:
             warnings.append(f"Row {row_num}: skipped ({err})")
             continue
@@ -154,13 +163,17 @@ def _parse_magnum_profile(text: str) -> ParseResult | None:
         if kind == "SRC":
             if hidden:
                 hidden_src += 1
-            src_names[order] = name or f"Source {order}"   # keyed by Order (MAGNUM uses Order)
-            src_port_map[order] = port                      # kept for reference only
+            src_names[order] = name or f"Source {order}"
+            src_port_map[order] = port
+            if namespace:
+                src_ns[order] = namespace
         elif kind in ("DST", "DEST", "DESTINATION"):
             if hidden:
                 hidden_dst += 1
-            dst_names[order] = name or f"Destination {order}"  # keyed by Order
+            dst_names[order] = name or f"Destination {order}"
             dst_port_map[order] = port
+            if namespace:
+                dst_ns[order] = namespace
         else:
             warnings.append(f"Row {row_num}: unknown type {kind!r}, skipped")
 
@@ -170,6 +183,19 @@ def _parse_magnum_profile(text: str) -> ParseResult | None:
     max_src = max(src_port_map.keys()) if src_port_map else 0
     max_dst = max(dst_port_map.keys()) if dst_port_map else 0
 
+    # Log namespace summary
+    unique_namespaces = set(src_ns.values()) | set(dst_ns.values())
+    if unique_namespaces:
+        _LOGGER.debug(
+            "MAGNUM profile namespaces detected: %s (%d src, %d dst with namespace data)",
+            sorted(unique_namespaces), len(src_ns), len(dst_ns),
+        )
+    elif src_names:
+        _LOGGER.warning(
+            "No Device Short Name data found in CSV — namespace filtering will be disabled. "
+            "Ensure the CSV includes the 'Device Short Name' column."
+        )
+
     return ParseResult(
         max_sources=max_src,
         max_destinations=max_dst,
@@ -177,6 +203,8 @@ def _parse_magnum_profile(text: str) -> ParseResult | None:
         destination_names=dst_names,
         source_port_map=src_port_map,
         destination_port_map=dst_port_map,
+        source_namespaces=src_ns,
+        destination_namespaces=dst_ns,
         format_detected="MAGNUM profile_availability",
         hidden_sources=hidden_src,
         hidden_destinations=hidden_dst,

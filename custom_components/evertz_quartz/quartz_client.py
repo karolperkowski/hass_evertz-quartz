@@ -108,9 +108,15 @@ class QuartzClient:
         self._pfx = f"[{router_name}] " if router_name else ""
 
         # All keyed by Order (MAGNUM's numbering)
-        self.routes: dict[int, int] = {}           # dest_order → src_order
-        self.source_names: dict[int, str] = {}     # src_order → name
-        self.destination_names: dict[int, str] = {}# dst_order → name
+        self.routes: dict[int, int] = {}            # dest_order → src_order
+        self.source_names: dict[int, str] = {}      # src_order → name
+        self.destination_names: dict[int, str] = {} # dst_order → name
+
+        # Namespace (Device Short Name) — keyed by Order.
+        # Empty when no CSV loaded or CSV has no Short Name column.
+        # Used to block cross-namespace routing.
+        self.source_namespaces: dict[int, str] = {}      # src_order → short_name
+        self.destination_namespaces: dict[int, str] = {} # dst_order → short_name
 
         # Port maps stored for reference / diagnostics only — not used in commands
         self.src_port_map: dict[int, int] = {}     # order → quartz_port (diagnostics only)
@@ -299,6 +305,8 @@ class QuartzClient:
             "routes": {str(k): v for k, v in sorted(self.routes.items())},
             "source_names": {str(k): v for k, v in sorted(self.source_names.items())},
             "destination_names": {str(k): v for k, v in sorted(self.destination_names.items())},
+            "source_namespaces": {str(k): v for k, v in sorted(self.source_namespaces.items())},
+            "destination_namespaces": {str(k): v for k, v in sorted(self.destination_namespaces.items())},
         }
 
     # ── Connection management ─────────────────────────────────────────────

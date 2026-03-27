@@ -28,3 +28,7 @@ QUARTZ_ACK = ".A"
 
 # Profile mismatch tracking (stored in entry.data, cleared on reload)
 CONF_PROFILE_MISMATCH = "profile_mismatch_orders"  # list of out-of-range Orders seen
+
+# Namespace data — stored in entry.data alongside names (CSV re-import clears old values)
+DATA_SOURCE_NAMESPACES      = "source_namespaces"       # {str(order): short_name}
+DATA_DESTINATION_NAMESPACES = "destination_namespaces"  # {str(order): short_name}

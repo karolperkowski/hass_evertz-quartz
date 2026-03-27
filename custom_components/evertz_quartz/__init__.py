@@ -145,6 +145,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if stored_dst := entry.data.get("destination_names"):
             client.destination_names.update({int(k): v for k, v in stored_dst.items()})
             _LOGGER.debug("[%s] Loaded %d destination names from CSV profile", rname, len(stored_dst))
+        if stored_src_ns := entry.data.get("source_namespaces"):
+            client.source_namespaces.update({int(k): v for k, v in stored_src_ns.items()})
+            unique_ns = set(stored_src_ns.values())
+            _LOGGER.debug("[%s] Loaded %d source namespaces: %s", rname, len(stored_src_ns), sorted(unique_ns))
+        if stored_dst_ns := entry.data.get("destination_namespaces"):
+            client.destination_namespaces.update({int(k): v for k, v in stored_dst_ns.items()})
+            if not entry.data.get("source_namespaces"):
+                _LOGGER.warning(
+                    "[%s] Destination namespaces loaded but no source namespaces — "
+                    "namespace filtering will be partially disabled", rname
+                )
+        if not stored_src_ns and client.source_names:
+            _LOGGER.info(
+                "[%s] No namespace data in CSV — namespace filtering disabled. "
+                "Re-import CSV to enable cross-namespace route blocking.", rname
+            )
 
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,
@@ -224,6 +240,17 @@ def _register_route_service(hass: HomeAssistant) -> None:
                     f"Multiple routers configured ({names}). Specify device_id or router_name."
                 )
 
+        # Namespace check — block cross-namespace routes from service calls too
+        dest_ns = client.destination_namespaces.get(destination)
+        src_ns  = client.source_namespaces.get(source)
+        if dest_ns and src_ns and dest_ns != src_ns:
+            dest_name = client.destination_names.get(destination, f"Dest {destination}")
+            src_name  = client.source_names.get(source, f"Source {source}")
+            raise ServiceValidationError(
+                f"Cross-namespace route blocked: source {src_name!r} (namespace={src_ns}) "
+                f"cannot route to {dest_name!r} (namespace={dest_ns}). "
+                f"Only {dest_ns} sources are valid for {dest_name!r}."
+            )
         await client.route(destination, source, levels_override)
 
     hass.services.async_register(

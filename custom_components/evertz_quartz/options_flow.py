@@ -283,6 +283,8 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                         destination_names=result.destination_names if result.max_destinations > 0 else None,
                         source_port_map=result.source_port_map if result.max_sources > 0 else None,
                         destination_port_map=result.destination_port_map if result.max_destinations > 0 else None,
+                        source_namespaces=result.source_namespaces if result.source_namespaces else None,
+                        destination_namespaces=result.destination_namespaces if result.destination_namespaces else None,
                     )
                 else:
                     return await self._apply(
@@ -331,6 +333,8 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         destination_names: dict[int, str] | None = None,
         source_port_map: dict[int, int] | None = None,
         destination_port_map: dict[int, int] | None = None,
+        source_namespaces: dict[int, str] | None = None,
+        destination_namespaces: dict[int, str] | None = None,
     ) -> FlowResult:
         """
         Persist all changes and optionally reload.
@@ -383,6 +387,10 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                 new_data["source_names"] = {str(k): v for k, v in source_names.items()}
             if destination_names:
                 new_data["destination_names"] = {str(k): v for k, v in destination_names.items()}
+            if source_namespaces is not None:
+                new_data["source_namespaces"] = {str(k): v for k, v in source_namespaces.items()}
+            if destination_namespaces is not None:
+                new_data["destination_namespaces"] = {str(k): v for k, v in destination_namespaces.items()}
             new_data[CONF_CSV_LOADED] = True
 
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
