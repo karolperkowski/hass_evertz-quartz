@@ -1,13 +1,17 @@
 {
   "domain": "evertz_quartz",
   "name": "Evertz Quartz Router",
-  "version": "1.9.2",
+  "version": "1.10.0",
   "integration_type": "hub",
   "documentation": "https://github.com/karolperkowski/hass_evertz-quartz",
   "issue_tracker": "https://github.com/karolperkowski/hass_evertz-quartz/issues",
   "requirements": [],
-  "dependencies": ["file_upload"],
-  "codeowners": ["@karolperkowski"],
+  "dependencies": [
+    "file_upload"
+  ],
+  "codeowners": [
+    "@karolperkowski"
+  ],
   "config_flow": true,
   "iot_class": "local_push",
   "loggers": [
@@ -16,6 +20,7 @@
     "custom_components.evertz_quartz.select",
     "custom_components.evertz_quartz.button",
     "custom_components.evertz_quartz.config_flow",
-    "custom_components.evertz_quartz.options_flow"
+    "custom_components.evertz_quartz.options_flow",
+    "custom_components.evertz_quartz.binary_sensor"
   ]
 }

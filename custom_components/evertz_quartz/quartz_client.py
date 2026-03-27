@@ -86,6 +86,7 @@ class QuartzClient:
         route_callback: Callable[[int, int, str], None] | None = None,
         mnemonic_callback: Callable[[], None] | None = None,
         connection_callback: Callable[[bool], None] | None = None,
+        notify_callback: Callable[[str, int], None] | None = None,
         reconnect_delay: int = DEFAULT_RECONNECT_DELAY,
         connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
     ) -> None:
@@ -119,6 +120,9 @@ class QuartzClient:
         self._route_callback = route_callback
         self._mnemonic_callback = mnemonic_callback
         self._connection_callback = connection_callback
+        self._notify_callback = notify_callback
+        # Tracks (kind, order) pairs already warned — prevents log/notification spam
+        self._warned_orders: set[tuple[str, int]] = set()
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._listen_task: asyncio.Task | None = None
@@ -430,6 +434,9 @@ class QuartzClient:
                 )
             if self._route_callback:
                 self._route_callback(dest_order, src_order, levels_str)
+            # Out-of-range detection — fires once per unique Order per session
+            self._check_order_range("src", src_order)
+            self._check_order_range("dst", dest_order)
             return
 
         # .I interrogate response: .A[levels][dest_order],[src_order]
@@ -489,6 +496,22 @@ class QuartzClient:
         # Log raw bytes for unhandled messages so unexpected prefixes/encodings are visible
         raw_hex = line.encode().hex()
         self._log.debug("%sUnhandled: %r (hex: %s)", self._pfx, line, raw_hex)
+
+    def _check_order_range(self, kind: str, order: int) -> None:
+        """Warn once per session if an Order number exceeds the configured maximum."""
+        limit = self.max_sources if kind == "src" else self.max_destinations
+        label = "source" if kind == "src" else "destination"
+        conf  = "max_sources" if kind == "src" else "max_destinations"
+        key   = (kind, order)
+        if order > limit and key not in self._warned_orders:
+            self._warned_orders.add(key)
+            self._log.warning(
+                "%s%s Order %d exceeds configured %s=%d — router profile may have expanded. "
+                "Update via Settings → Devices & Services → Evertz Quartz → Configure → Update Profile.",
+                self._pfx, label.capitalize(), order, conf, limit,
+            )
+            if self._notify_callback:
+                self._notify_callback(kind, order)
 
     def _on_mnemonic_received(self) -> None:
         self._mnemonics_received += 1

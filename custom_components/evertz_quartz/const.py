@@ -25,3 +25,6 @@ DEFAULT_CONNECT_TIMEOUT = 10   # seconds
 
 # Quartz protocol constants
 QUARTZ_ACK = ".A"
+
+# Profile mismatch tracking (stored in entry.data, cleared on reload)
+CONF_PROFILE_MISMATCH = "profile_mismatch_orders"  # list of out-of-range Orders seen

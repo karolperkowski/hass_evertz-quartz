@@ -15,7 +15,7 @@
         }
       },
       "profile": {
-        "title": "Router Profile \u2014 {router_name}",
+        "title": "Router Profile — {router_name}",
         "description": "Set the number of sources and destinations. Upload your MAGNUM profile_availability CSV to populate these automatically.\n\n{csv_warnings}",
         "data": {
           "max_sources": "Max Sources",
@@ -26,13 +26,13 @@
         "data_description": {
           "max_sources": "Highest source port number in your profile (sources and destinations do not need to be equal).",
           "max_destinations": "Highest destination port number in your profile.",
-          "levels": "V = video only. Append A, B, C\u2026 for audio. E.g. VABC routes video + first 3 audio levels.",
-          "csv_upload": "Upload your MAGNUM profile_availability.csv export to auto-populate counts and names. Supports partial exports \u2014 a sources-only file will only update the source count."
+          "levels": "V = video only. Append A, B, C… for audio. E.g. VABC routes video + first 3 audio levels.",
+          "csv_upload": "Upload your MAGNUM profile_availability.csv export to auto-populate counts and names. Supports partial exports — a sources-only file will only update the source count."
         }
       }
     },
     "error": {
-      "cannot_connect": "Unable to connect \u2014 check the IP address and port.",
+      "cannot_connect": "Unable to connect — check the IP address and port.",
       "csv_parse_error": "File could not be parsed. Check the format and try again, or set counts manually.",
       "unknown": "An unexpected error occurred."
     },
@@ -43,30 +43,38 @@
   "options": {
     "step": {
       "init": {
-        "title": "Configure \u2014 {router_name}",
-        "description": "Router: **{router_name}** ({current_size})\nProfile: {csv_status}\n\nSize and level changes apply immediately. Changing Max Destinations reloads the integration.",
+        "title": "Configure — {router_name}",
+        "description": "**Connection settings** for {router_name}.\n\nThese apply immediately without a restart. Click Next to review or update the router profile (sources, destinations, CSV).",
+        "data": {
+          "levels": "Levels",
+          "reconnect_delay": "Reconnect delay (seconds)",
+          "connect_timeout": "Connection timeout (seconds)"
+        },
+        "data_description": {
+          "levels": "V = video only. Append A, B, C… for audio levels. Example: VABC routes video + first 3 audio levels.",
+          "reconnect_delay": "How long to wait before reconnecting after a network drop.",
+          "connect_timeout": "Maximum time to establish the initial TCP connection."
+        }
+      },
+      "profile": {
+        "title": "Update Profile — {router_name}",
+        "description": "**Current profile:** {current_size}\n**Status:** {csv_status}\n\nUpload a new CSV to update counts and names automatically, or change the counts manually below.",
         "data": {
           "max_sources": "Max Sources",
           "max_destinations": "Max Destinations",
-          "levels": "Levels",
-          "reconnect_delay": "Reconnect delay (seconds)",
-          "connect_timeout": "Connection timeout (seconds)",
-          "csv_upload": "Re-import Profile CSV (optional)"
+          "csv_upload": "Upload Profile CSV (optional)"
         },
         "data_description": {
-          "max_sources": "Applies live \u2014 no restart needed.",
-          "max_destinations": "Changing this will reload the integration.",
-          "levels": "V = video, A/B/C = audio. E.g. VABC routes video + first 3 audio levels.",
-          "reconnect_delay": "Seconds to wait before reconnecting after a drop.",
-          "connect_timeout": "Max seconds to establish the TCP connection.",
-          "csv_upload": "Upload a new profile_availability.csv to update counts and names. You will be shown a summary of changes before they are applied."
+          "max_sources": "Total number of sources in your router profile.",
+          "max_destinations": "Total number of destinations in your router profile.",
+          "csv_upload": "Upload your profile_availability.csv to update counts and names automatically. You will see a summary of changes before they are applied."
         }
       },
-      "confirm_csv": {
-        "title": "Confirm Profile Import",
+      "confirm": {
+        "title": "Confirm Changes",
         "description": "{summary}",
         "data": {
-          "confirmed": "Apply these changes"
+          "confirmed": "Apply these changes and reload"
         }
       }
     }
@@ -105,6 +113,15 @@
       "clear_csv": {
         "name": "Clear CSV Profile"
       }
+    },
+    "binary_sensor": {
+      "profile_mismatch": {
+        "name": "Profile Mismatch",
+        "state": {
+          "on": "Mismatch detected",
+          "off": "Profile OK"
+        }
+      }
     }
   },
   "services": {
@@ -114,7 +131,7 @@
       "fields": {
         "device_id": {
           "name": "Device ID",
-          "description": "HA device registry ID of the router. Find it in Settings \u2192 Devices & Services \u2192 your router \u2192 device info."
+          "description": "HA device registry ID of the router. Find it in Settings → Devices & Services → your router → device info."
         },
         "router_name": {
           "name": "Router Name",

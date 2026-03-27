@@ -31,7 +31,7 @@ from .quartz_client import QuartzClient
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SELECT, Platform.BUTTON]
+PLATFORMS: list[Platform] = [Platform.SELECT, Platform.BUTTON, Platform.BINARY_SENSOR]
 
 ATTR_DESTINATION  = "destination"
 ATTR_SOURCE       = "source"
@@ -47,6 +47,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     route_listeners: list = []
     mnemonic_listeners: list = []
+    mismatch_listeners: list = []
+    mismatch_orders: set = set()   # (kind, order) pairs seen out-of-range this session
 
     def _route_callback(dest: int, src: int, levels: str) -> None:
         for cb in route_listeners:
@@ -59,6 +61,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def _connection_callback(connected: bool) -> None:
         name = router_display_name(entry)
         _LOGGER.info("Evertz Quartz [%s] %s", name, "connected" if connected else "disconnected")
+
+    def _notify_callback(kind: str, order: int) -> None:
+        """Called by client when an out-of-range Order is received."""
+        key = (kind, order)
+        mismatch_orders.add(key)
+        label = "source" if kind == "src" else "destination"
+        limit_key = "max_sources" if kind == "src" else "max_destinations"
+        limit = entry.data.get(limit_key, 0)
+        rname = router_display_name(entry)
+        # Fire HA persistent notification
+        hass.async_create_task(
+            hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "notification_id": f"evertz_quartz_{entry.entry_id}_profile_mismatch",
+                    "title": f"Evertz Quartz [{rname}] — Profile Mismatch",
+                    "message": (
+                        f"The router reported {label} Order **{order}** which is outside "
+                        f"the configured range (current maximum: {limit}).\n\n"
+                        "Your router profile may have expanded or changed.\n\n"
+                        "**To fix:** Go to Settings \u2192 Devices & Services \u2192 "
+                        "Evertz Quartz \u2192 Configure and select **Update Profile** "
+                        "to re-import your CSV or adjust the counts manually."
+                    ),
+                },
+            )
+        )
+        # Notify binary sensor
+        for cb in mismatch_listeners:
+            hass.loop.call_soon_threadsafe(cb)
 
     # Load port maps (Order → Quartz port) — persisted from CSV
     src_port_map = {int(k): v for k, v in entry.data.get("source_port_map", {}).items()}
@@ -82,6 +115,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         route_callback=_route_callback,
         mnemonic_callback=_mnemonic_callback,
         connection_callback=_connection_callback,
+        notify_callback=_notify_callback,
         reconnect_delay=effective(entry, CONF_RECONNECT_DELAY,  DEFAULT_RECONNECT_DELAY),
         connect_timeout=effective(entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT),
     )
@@ -103,6 +137,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "client": client,
         "route_listeners": route_listeners,
         "mnemonic_listeners": mnemonic_listeners,
+        "mismatch_listeners": mismatch_listeners,
+        "mismatch_orders": mismatch_orders,
     }
 
     await client.start()
