@@ -180,8 +180,9 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_MAX_SOURCES:      user_input.get(CONF_MAX_SOURCES, self._max_sources),
                     CONF_MAX_DESTINATIONS: user_input.get(CONF_MAX_DESTINATIONS, self._max_destinations),
                     CONF_LEVELS:           user_input.get(CONF_LEVELS, self._levels),
-                    "source_names":        {str(k): v for k, v in self._source_names.items()},
-                    "destination_names":   {str(k): v for k, v in self._destination_names.items()},
+                    # Port maps persist — encode Order↔Port relationship from CSV
+                    # Names are transient — pre-loaded into client memory only,
+                    # then overridden by live .RT/.RD responses from the router
                     "source_port_map":     {str(k): v for k, v in self._source_port_map.items()},
                     "destination_port_map":{str(k): v for k, v in self._destination_port_map.items()},
                 }

@@ -314,16 +314,16 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
 
         # ── Persist names into entry.data via hass.config_entries ────────
         # Names go into data (not options) so they survive options resets
-        if source_names or destination_names or source_port_map or destination_port_map:
+        # Port maps persist (encode Order↔Port from CSV); names are transient
+        if source_port_map or destination_port_map:
             new_data = dict(self._entry.data)
-            if source_names:
-                new_data["source_names"] = {str(k): v for k, v in source_names.items()}
-            if destination_names:
-                new_data["destination_names"] = {str(k): v for k, v in destination_names.items()}
             if source_port_map:
                 new_data["source_port_map"] = {str(k): v for k, v in source_port_map.items()}
             if destination_port_map:
                 new_data["destination_port_map"] = {str(k): v for k, v in destination_port_map.items()}
+            # Also remove any stale stored names from previous versions
+            new_data.pop("source_names", None)
+            new_data.pop("destination_names", None)
             self.hass.config_entries.async_update_entry(self._entry, data=new_data)
 
         result = self.async_create_entry(title="", data=settings)

@@ -177,42 +177,35 @@ class QuartzClient:
                 break
 
     async def query_all_mnemonics(self) -> None:
-        """Fetch source & destination labels from the router using actual Quartz port numbers.
+        """Fetch source & destination labels from the router.
 
-        Skips ports whose names are already populated (e.g. loaded from a CSV profile)
-        to avoid flooding the router unnecessarily on reconnect.
+        Queries every Quartz port number in the port maps.
+        Router responses always override any previously held names,
+        keeping HA in sync if labels change on the router.
         """
         if not self._connected or self._writer is None:
             return
 
-        # Only query ports we don't already have names for
-        dst_ports_needed = [p for p in self.dst_port_map.values() if p not in self.destination_names]
-        src_ports_needed = [p for p in self.src_port_map.values() if p not in self.source_names]
-        total = len(dst_ports_needed) + len(src_ports_needed)
-
-        if total == 0:
-            _LOGGER.debug(
-                "Mnemonic fetch skipped — all %d names already loaded from profile",
-                len(self.dst_port_map) + len(self.src_port_map),
-            )
-            return
+        dst_ports = sorted(self.dst_port_map.values())
+        src_ports = sorted(self.src_port_map.values())
+        total = len(dst_ports) + len(src_ports)
 
         self._mnemonics_expected = total
         self._mnemonics_received = 0
         _LOGGER.debug(
-            "Fetching mnemonics: %d destination(s) + %d source(s) missing names",
-            len(dst_ports_needed), len(src_ports_needed),
+            "Fetching mnemonics: %d destination(s), %d source(s)",
+            len(dst_ports), len(src_ports),
         )
 
         try:
-            for port in sorted(dst_ports_needed):
+            for port in dst_ports:
                 cmd = f".RD{port}\r"
                 self._tx(cmd)
                 self._writer.write(cmd.encode())
                 await self._writer.drain()
                 self.stats.messages_sent += 1
                 await asyncio.sleep(0.02)
-            for port in sorted(src_ports_needed):
+            for port in src_ports:
                 cmd = f".RT{port}\r"
                 self._tx(cmd)
                 self._writer.write(cmd.encode())

@@ -92,13 +92,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         connect_timeout=_effective(entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT),
     )
 
-    # Pre-populate names from CSV stored in entry.data (survives reloads)
-    if stored_src := entry.data.get("source_names"):
-        client.source_names.update({int(k): v for k, v in stored_src.items()})
-        _LOGGER.debug("Loaded %d source names from stored profile", len(stored_src))
-    if stored_dst := entry.data.get("destination_names"):
-        client.destination_names.update({int(k): v for k, v in stored_dst.items()})
-        _LOGGER.debug("Loaded %d destination names from stored profile", len(stored_dst))
+    # Names are transient — not stored, populated from router .RT/.RD responses
 
     if src_port_map:
         _LOGGER.debug("Loaded source port map (%d entries)", len(src_port_map))
