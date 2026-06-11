@@ -16,6 +16,27 @@ def effective(entry: ConfigEntry, key: str, default):
     return entry.data.get(key, default)
 
 
+def readonly_destinations(entry: ConfigEntry) -> set[int]:
+    """Destination Orders marked read-only in the Configure panel."""
+    from .const import CONF_READONLY_DESTINATIONS
+    return {int(o) for o in entry.options.get(CONF_READONLY_DESTINATIONS, [])}
+
+
+def user_can_route(entry: ConfigEntry, dest_order: int, user_id: str | None) -> bool:
+    """Return True if a take to this destination is permitted for this user.
+
+    Destinations not marked read-only are open to everyone. Read-only
+    destinations accept takes only from HA users in the allowed list.
+    Calls without a user context (automations, scripts) are blocked on
+    read-only destinations.
+    """
+    from .const import CONF_READONLY_ALLOWED_USERS
+    if dest_order not in readonly_destinations(entry):
+        return True
+    allowed = entry.options.get(CONF_READONLY_ALLOWED_USERS, [])
+    return bool(user_id) and user_id in allowed
+
+
 def router_display_name(entry: ConfigEntry) -> str:
     """Human-readable router name: CONF_NAME → host IP → fallback."""
     from .const import CONF_HOST, CONF_NAME

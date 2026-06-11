@@ -148,17 +148,30 @@ routing commands.
 | `button.{name}_resync_routes` | Button | Diagnostic |
 | `button.{name}_resync_names` | Button | Diagnostic |
 | `button.{name}_clear_csv` | Button | Diagnostic |
+| `sensor.{name}_{dest}_source` | Sensor | — (read-only destinations only) |
+
+### Read-only destinations
+Destinations selected in the Configure panel (`readonly_destinations`
+option, stored as Order strings) get a read-only sensor showing the
+current source name. Takes to them are blocked — in the select entity
+and the `evertz_quartz.route` service — unless the calling HA user is
+in `readonly_allowed_users`. Calls with no user context (automations,
+scripts) are always blocked on read-only destinations. The select
+entity is still visible to all users; enforcement happens on the take.
+The read-only list is keyed by Order, so re-check it after a CSV
+re-import if the profile order changed.
 
 ---
 
 ## Options Flow (Configure panel)
 
-Fields: Max Sources, Max Destinations, Levels, Reconnect Delay,
-Connect Timeout, CSV Upload
+Fields: Levels, Reconnect Delay, Connect Timeout, Read-only Destinations,
+Allowed Users, Max Sources, Max Destinations, CSV Upload
 
 - Any CSV upload → full reload
-- Levels / reconnect / timeout changes → apply live without reload
+- Levels / reconnect / timeout / allowed-users changes → apply live without reload
 - Max Sources or Destinations change without CSV → reload
+- Read-only destination list change → reload (sensors created/removed)
 
 ---
 
