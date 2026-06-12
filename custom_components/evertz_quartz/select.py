@@ -12,10 +12,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     CONF_MAX_DESTINATIONS,
+    CONF_READONLY_ALLOWED_USERS,
     DEFAULT_MAX_DESTINATIONS,
     DOMAIN,
 )
-from .helpers import effective, router_display_name, user_can_route
+from .helpers import effective, router_display_name, readonly_destinations, user_can_route
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,7 +127,16 @@ class QuartzDestinationSelect(SelectEntity):
         dest_ns   = self._client.destination_namespaces.get(self._order)
         src_ns    = self._client.source_namespaces.get(src_order) if src_order else None
         lock_val = self._client.locks.get(self._order, 0)
+        # read_only + allowed users let the Lovelace card render this
+        # destination as display-only for users outside the allowed list
+        # (hass.user.id in the frontend). Enforcement stays server-side.
+        is_ro = self._order in readonly_destinations(self._entry)
         return {
+            "read_only":         is_ro,
+            "readonly_allowed_users": (
+                list(self._entry.options.get(CONF_READONLY_ALLOWED_USERS, []))
+                if is_ro else []
+            ),
             "router":            self._entry.data.get("router_name") or self._entry.data.get("host", ""),
             "host":              self._entry.data.get("host", ""),
             "port":              self._entry.data.get("port", ""),
