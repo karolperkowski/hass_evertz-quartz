@@ -26,7 +26,7 @@ from .const import (
     DEFAULT_RECONNECT_DELAY,
     DOMAIN,
 )
-from .helpers import effective, router_display_name
+from .helpers import effective, router_display_name, user_can_route
 from .quartz_client import QuartzClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -213,6 +213,7 @@ def _register_route_service(hass: HomeAssistant) -> None:
 
         entries = hass.config_entries.async_entries(DOMAIN)
         client: QuartzClient | None = None
+        target_entry: ConfigEntry | None = None
 
         if target_device_id:
             dev_reg = dr.async_get(hass)
@@ -222,6 +223,7 @@ def _register_route_service(hass: HomeAssistant) -> None:
             for ident_domain, entry_id in device.identifiers:
                 if ident_domain == DOMAIN:
                     client = hass.data.get(DOMAIN, {}).get(entry_id, {}).get("client")
+                    target_entry = hass.config_entries.async_get_entry(entry_id)
                     break
             if client is None:
                 raise ServiceValidationError(f"Device '{target_device_id}' has no active client")
@@ -230,6 +232,7 @@ def _register_route_service(hass: HomeAssistant) -> None:
             for entry in entries:
                 if router_display_name(entry).lower() == target_name.lower():
                     client = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("client")
+                    target_entry = entry
                     break
             if client is None:
                 names = [router_display_name(e) for e in entries]
@@ -240,6 +243,7 @@ def _register_route_service(hass: HomeAssistant) -> None:
         else:
             if len(entries) == 1:
                 client = hass.data.get(DOMAIN, {}).get(entries[0].entry_id, {}).get("client")
+                target_entry = entries[0]
             elif len(entries) == 0:
                 raise ServiceValidationError("No Evertz Quartz routers configured")
             else:
@@ -247,6 +251,16 @@ def _register_route_service(hass: HomeAssistant) -> None:
                 raise ServiceValidationError(
                     f"Multiple routers configured ({names}). Specify device_id or router_name."
                 )
+
+        # Read-only check — block takes from users not in the allowed list.
+        # Calls without a user context (automations, scripts) are blocked too.
+        if target_entry and not user_can_route(target_entry, destination, call.context.user_id):
+            dest_name = client.destination_names.get(destination, f"Dest {destination}")
+            raise ServiceValidationError(
+                f"Route blocked: destination {dest_name!r} (Order {destination}) is "
+                "read-only for this user. An administrator can change this in the "
+                "integration's Configure panel."
+            )
 
         # Lock check — block routing to locked destinations
         if client.locks.get(destination, 0) > 0:

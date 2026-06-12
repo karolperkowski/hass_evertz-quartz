@@ -15,6 +15,12 @@ CONF_CSV_LOADED = "csv_loaded"       # True when names/port maps came from a CSV
 CONF_RECONNECT_DELAY = "reconnect_delay"
 CONF_CONNECT_TIMEOUT = "connect_timeout"
 
+# Read-only destinations (stored in entry.options, editable via Configure)
+# Destinations in this list get a read-only source sensor; takes are blocked
+# unless the calling user is in the allowed list. Keyed by Order (as strings).
+CONF_READONLY_DESTINATIONS  = "readonly_destinations"
+CONF_READONLY_ALLOWED_USERS = "readonly_allowed_users"
+
 # Defaults
 DEFAULT_PORT = 3737
 DEFAULT_MAX_SOURCES = 32

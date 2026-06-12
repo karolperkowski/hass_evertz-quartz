@@ -48,12 +48,16 @@
         "data": {
           "levels": "Levels",
           "reconnect_delay": "Reconnect delay (seconds)",
-          "connect_timeout": "Connection timeout (seconds)"
+          "connect_timeout": "Connection timeout (seconds)",
+          "readonly_destinations": "Read-only destinations",
+          "readonly_allowed_users": "Users allowed to control read-only destinations"
         },
         "data_description": {
           "levels": "V = video only. Append A, B, C… for audio levels. Example: VABC routes video + first 3 audio levels.",
           "reconnect_delay": "How long to wait before reconnecting after a network drop.",
-          "connect_timeout": "Maximum time to establish the initial TCP connection."
+          "connect_timeout": "Maximum time to establish the initial TCP connection.",
+          "readonly_destinations": "Selected destinations get a read-only source sensor, and routing to them is blocked. Changing this list reloads the integration.",
+          "readonly_allowed_users": "These users can still route to read-only destinations. Leave empty to block everyone. Automations and scripts are always blocked on read-only destinations."
         }
       },
       "profile": {

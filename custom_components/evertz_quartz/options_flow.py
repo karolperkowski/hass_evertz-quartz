@@ -13,6 +13,12 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
     FileSelector,
     FileSelectorConfig,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    UserSelector,
+    UserSelectorConfig,
 )
 
 from .const import (
@@ -22,6 +28,8 @@ from .const import (
     CONF_MAX_DESTINATIONS,
     CONF_MAX_SOURCES,
     CONF_NAME,
+    CONF_READONLY_ALLOWED_USERS,
+    CONF_READONLY_DESTINATIONS,
     CONF_RECONNECT_DELAY,
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_LEVELS,
@@ -49,6 +57,19 @@ def _parse_uploaded_csv(hass, upload_id: str) -> tuple[ParseResult | None, str]:
     if result is None:
         return None, "File could not be parsed — check format and try again."
     return result, ""
+
+
+def _destination_select_options(entry: ConfigEntry) -> list[SelectOptionDict]:
+    """Dropdown options for the read-only destination picker — keyed by Order."""
+    max_dst = effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
+    names = entry.data.get("destination_names", {})
+    return [
+        SelectOptionDict(
+            value=str(order),
+            label=f"{names.get(str(order)) or f'Destination {order}'} (Order {order})",
+        )
+        for order in range(1, max_dst + 1)
+    ]
 
 
 def _build_csv_diff(entry: ConfigEntry, result: ParseResult) -> dict:
@@ -89,6 +110,11 @@ def _build_csv_diff(entry: ConfigEntry, result: ParseResult) -> dict:
     if result.has_port_gaps:
         warnings.append(
             "Non-contiguous port numbering detected \u2014 routing uses Order numbers correctly."
+        )
+    if entry.options.get(CONF_READONLY_DESTINATIONS):
+        warnings.append(
+            "Read-only destinations are keyed by Order \u2014 re-check the read-only "
+            "list in Configure if the profile order changed."
         )
 
     return {"changes": changes, "warnings": warnings, "result": result}
@@ -170,6 +196,8 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         cur_recon   = effective(self._entry, CONF_RECONNECT_DELAY,  DEFAULT_RECONNECT_DELAY)
         cur_timeout = effective(self._entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT)
         rname       = router_display_name(self._entry)
+        cur_ro       = [str(o) for o in self._entry.options.get(CONF_READONLY_DESTINATIONS, [])]
+        cur_ro_users = self._entry.options.get(CONF_READONLY_ALLOWED_USERS, [])
 
         return self.async_show_form(
             step_id="init",
@@ -177,6 +205,16 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                 vol.Required(CONF_LEVELS,          default=cur_levels):   str,
                 vol.Required(CONF_RECONNECT_DELAY, default=cur_recon):    vol.All(int, vol.Range(min=1, max=300)),
                 vol.Required(CONF_CONNECT_TIMEOUT, default=cur_timeout):  vol.All(int, vol.Range(min=3, max=60)),
+                vol.Optional(CONF_READONLY_DESTINATIONS, default=cur_ro): SelectSelector(
+                    SelectSelectorConfig(
+                        options=_destination_select_options(self._entry),
+                        multiple=True,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(CONF_READONLY_ALLOWED_USERS, default=cur_ro_users): UserSelector(
+                    UserSelectorConfig(multiple=True)
+                ),
             }),
             description_placeholders={"router_name": rname},
             last_step=False,
@@ -396,7 +434,21 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
 
         # ── Build options entry (connection settings only) ────────────────
+        # Read-only destination settings — list changes add/remove sensor
+        # entities, so they trigger a reload below.
+        old_ro = sorted(str(o) for o in self._entry.options.get(CONF_READONLY_DESTINATIONS, []))
+        new_ro = sorted(
+            str(o) for o in settings.get(CONF_READONLY_DESTINATIONS,
+                                         self._entry.options.get(CONF_READONLY_DESTINATIONS, []))
+        )
+        readonly_changed = new_ro != old_ro
+
         options_data: dict = {CONF_LEVELS: final_lvl}
+        options_data[CONF_READONLY_DESTINATIONS] = new_ro
+        options_data[CONF_READONLY_ALLOWED_USERS] = settings.get(
+            CONF_READONLY_ALLOWED_USERS,
+            self._entry.options.get(CONF_READONLY_ALLOWED_USERS, []),
+        )
         if CONF_RECONNECT_DELAY in settings:
             options_data[CONF_RECONNECT_DELAY] = settings[CONF_RECONNECT_DELAY]
         if CONF_CONNECT_TIMEOUT in settings:
@@ -409,11 +461,16 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         result = self.async_create_entry(title="", data=options_data)
 
         # ── Reload when counts or CSV changed ─────────────────────────────
-        needs_reload = csv_changed or final_src != old_src or final_dst != old_dst
+        needs_reload = (
+            csv_changed
+            or final_src != old_src
+            or final_dst != old_dst
+            or readonly_changed
+        )
         if needs_reload:
             _LOGGER.info(
-                "Profile change \u2014 reloading (src: %d\u2192%d, dst: %d\u2192%d, csv: %s)",
-                old_src, final_src, old_dst, final_dst, csv_changed,
+                "Profile change \u2014 reloading (src: %d\u2192%d, dst: %d\u2192%d, csv: %s, readonly: %s)",
+                old_src, final_src, old_dst, final_dst, csv_changed, readonly_changed,
             )
             self.hass.async_create_task(
                 self.hass.config_entries.async_reload(self._entry.entry_id)

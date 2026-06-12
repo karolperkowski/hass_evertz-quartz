@@ -15,7 +15,7 @@ from .const import (
     DEFAULT_MAX_DESTINATIONS,
     DOMAIN,
 )
-from .helpers import effective, router_display_name
+from .helpers import effective, router_display_name, user_can_route
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -157,6 +157,32 @@ class QuartzDestinationSelect(SelectEntity):
                 self._entry.data.get("router_name", ""), self._order, option,
             )
             return
+
+        # ── Read-only check ──────────────────────────────────────────────────
+        user_id = self._context.user_id if self._context else None
+        if not user_can_route(self._entry, self._order, user_id):
+            rname     = self._entry.data.get("router_name", self._entry.data.get("host", ""))
+            dest_name = self._client.destination_names.get(self._order, f"Dest {self._order}")
+            _LOGGER.warning(
+                "[%s] Route blocked: destination %s (Order %d) is read-only for this user "
+                "(user_id=%s)",
+                rname, dest_name, self._order, user_id or "none",
+            )
+            self.hass.async_create_task(
+                self.hass.services.async_call(
+                    "persistent_notification", "create", {
+                        "notification_id": f"evertz_quartz_{self._entry.entry_id}_readonly_{self._order}",
+                        "title": f"Evertz Quartz [{rname}] — Route Blocked: Read-Only Destination",
+                        "message": (
+                            f"**{dest_name}** is marked **read-only**.\n\n"
+                            "Routes to this destination are blocked for your user account.\n\n"
+                            "An administrator can change this under "
+                            "**Settings → Devices & Services → Evertz Quartz → Configure**."
+                        ),
+                    }
+                )
+            )
+            return  # Do NOT route
 
         # ── Lock check ───────────────────────────────────────────────────────
         if self._client.locks.get(self._order, 0) > 0:
