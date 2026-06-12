@@ -161,6 +161,11 @@ entity is still visible to all users; enforcement happens on the take.
 The read-only list is keyed by Order, so re-check it after a CSV
 re-import if the profile order changed.
 
+The destination select entity exposes `read_only` and
+`readonly_allowed_users` attributes so the Lovelace card can render
+read-only destinations as display-only for the current frontend user
+(`hass.user.id`). Enforcement always stays server-side.
+
 ---
 
 ## Options Flow (Configure panel)
