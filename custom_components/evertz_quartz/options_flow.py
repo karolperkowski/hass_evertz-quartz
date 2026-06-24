@@ -17,8 +17,6 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
-    UserSelector,
-    UserSelectorConfig,
 )
 
 from .const import (
@@ -70,6 +68,33 @@ def _destination_select_options(entry: ConfigEntry) -> list[SelectOptionDict]:
         )
         for order in range(1, max_dst + 1)
     ]
+
+
+async def _user_select_options(hass, include_ids=()) -> list[SelectOptionDict]:
+    """HA users that may be granted control of read-only destinations.
+
+    Home Assistant has no ``UserSelector`` helper, so the read-only "allowed
+    users" picker is a normal ``SelectSelector`` populated from the user
+    registry. Option values are user IDs — exactly what ``readonly_allowed_users``
+    stores and what ``user_can_route()`` checks — so the stored format is
+    unchanged. ``include_ids`` carries any already-saved IDs that are no longer
+    active/listed (e.g. a deleted user) so the current selection still validates
+    and can be cleared.
+    """
+    users = await hass.auth.async_get_users()
+    by_id = {u.id: u for u in users}
+    options = [
+        SelectOptionDict(value=u.id, label=u.name or u.id)
+        for u in users
+        if u.is_active and not u.system_generated
+    ]
+    present = {o["value"] for o in options}
+    for uid in include_ids:
+        if uid not in present:
+            u = by_id.get(uid)
+            label = u.name if (u and u.name) else uid
+            options.append(SelectOptionDict(value=uid, label=f"{label} (unavailable)"))
+    return sorted(options, key=lambda o: o["label"].lower())
 
 
 def _build_csv_diff(entry: ConfigEntry, result: ParseResult) -> dict:
@@ -198,6 +223,7 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         rname       = router_display_name(self._entry)
         cur_ro       = [str(o) for o in self._entry.options.get(CONF_READONLY_DESTINATIONS, [])]
         cur_ro_users = self._entry.options.get(CONF_READONLY_ALLOWED_USERS, [])
+        user_options = await _user_select_options(self.hass, cur_ro_users)
 
         return self.async_show_form(
             step_id="init",
@@ -212,8 +238,12 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Optional(CONF_READONLY_ALLOWED_USERS, default=cur_ro_users): UserSelector(
-                    UserSelectorConfig(multiple=True)
+                vol.Optional(CONF_READONLY_ALLOWED_USERS, default=cur_ro_users): SelectSelector(
+                    SelectSelectorConfig(
+                        options=user_options,
+                        multiple=True,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
                 ),
             }),
             description_placeholders={"router_name": rname},
