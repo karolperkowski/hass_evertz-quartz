@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.components.button import ButtonEntity
@@ -11,7 +12,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_CSV_LOADED, DOMAIN
-from .helpers import apply_resize, router_display_name
+from .helpers import router_display_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ async def async_setup_entry(
         QuartzResyncButton(entry, client, "full"),
         QuartzResyncButton(entry, client, "routes"),
         QuartzResyncButton(entry, client, "names"),
-        QuartzResizeButton(entry, client),
+        QuartzDetectDestinationsButton(entry, client),
         QuartzClearCsvButton(entry, client),
     ])
 
@@ -76,26 +77,30 @@ class QuartzResyncButton(ButtonEntity):
             await self._client.query_all_routes()
 
 
-class QuartzResizeButton(ButtonEntity):
-    """One-click resize: grow the configured matrix to the largest Order the
-    router has actually used (observed in .UV/.A traffic), then reload.
+class QuartzDetectDestinationsButton(ButtonEntity):
+    """Re-interrogate the controller to detect how many destinations exist.
 
-    Grow-only — shrinking can't be proven safe from observed traffic alone.
-    Does nothing when the configured size already covers everything seen.
+    Sends .I for each configured destination; the controller answers .A for
+    real destinations and .E for ones that don't exist, so the highest .A
+    reply is the true destination count. Reports the result in a notification
+    and refreshes the Profile Mismatch sensor.
+
+    It does NOT change the size — apply any change via Configure → Update
+    Profile. (Sources can't be enumerated over the protocol.)
     """
 
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:resize"
+    _attr_icon = "mdi:magnify-scan"
 
     def __init__(self, entry: ConfigEntry, client) -> None:
         self._entry = entry
         self._client = client
-        self._attr_unique_id = f"{entry.entry_id}_resize_detected"
+        self._attr_unique_id = f"{entry.entry_id}_detect_destinations"
 
     @property
     def name(self) -> str:
-        return "Resize to Detected"
+        return "Detect Destinations"
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -106,44 +111,46 @@ class QuartzResizeButton(ButtonEntity):
         return self._client._connected  # noqa: SLF001
 
     async def async_press(self) -> None:
-        cur_src, cur_dst = self._client.max_sources, self._client.max_destinations
-        new_src = max(cur_src, self._client.max_src_order_seen)
-        new_dst = max(cur_dst, self._client.max_dst_order_seen)
-        router  = router_display_name(self._entry)
-        notif_id = f"evertz_quartz_{self._entry.entry_id}_resize"
+        router = router_display_name(self._entry)
+        # Re-interrogate routes; the .A replies refresh the detected dest count.
+        await self._client.query_all_routes()
+        await asyncio.sleep(2)  # let the listen loop process the replies
 
-        if new_src == cur_src and new_dst == cur_dst:
-            _LOGGER.info(
-                "[%s] Resize to Detected: no change — configured %d×%d already covers "
-                "all seen Orders", router, cur_src, cur_dst,
+        configured = self._client.max_destinations
+        detected   = self._client.max_dst_order_seen
+        notif_id   = f"evertz_quartz_{self._entry.entry_id}_detect"
+
+        if detected < 1:
+            message = (
+                "No destinations answered interrogation, so the count can't be "
+                "detected — this controller may not support `.I`. Use the profile "
+                "CSV to set the size instead."
             )
-            await self.hass.services.async_call("persistent_notification", "create", {
-                "notification_id": notif_id,
-                "title": f"Evertz Quartz [{router}] — Profile Size",
-                "message": (
-                    f"No resize needed. The configured size "
-                    f"(**{cur_src} sources × {cur_dst} destinations**) already covers "
-                    "every Order the router has used so far."
-                ),
-            })
-            return
+        elif detected < configured:
+            message = (
+                f"Detected **{detected}** destination(s); configured for "
+                f"**{configured}**. The extra destinations are unused.\n\n"
+                f"Set **Max Destinations = {detected}** in **Configure → Update "
+                "Profile** to remove them (or upload the profile CSV)."
+            )
+        else:
+            message = (
+                f"Detected **{detected}** destination(s), matching the configured "
+                "size — nothing to change."
+            )
 
         _LOGGER.info(
-            "[%s] Resize to Detected: %d×%d → %d×%d (reloading)",
-            router, cur_src, cur_dst, new_src, new_dst,
+            "[%s] Detect Destinations: detected=%d configured=%d",
+            router, detected, configured,
         )
-        await apply_resize(self.hass, self._entry, new_src, new_dst)
         await self.hass.services.async_call("persistent_notification", "create", {
             "notification_id": notif_id,
-            "title": f"Evertz Quartz [{router}] — Profile Resized",
-            "message": (
-                f"Resized from **{cur_src}×{cur_dst}** to "
-                f"**{new_src} sources × {new_dst} destinations**, based on the largest "
-                "Order numbers the router has used. The integration is reloading to "
-                "create the new entities.\n\nNew slots show generic names "
-                "(*Source N* / *Destination N*) until you re-import the profile CSV."
-            ),
+            "title": f"Evertz Quartz [{router}] — Destination Detection",
+            "message": message,
         })
+        # Refresh the Profile Mismatch sensor
+        for cb in self.hass.data[DOMAIN][self._entry.entry_id].get("mismatch_listeners", []):
+            self.hass.loop.call_soon_threadsafe(cb)
 
 
 class QuartzClearCsvButton(ButtonEntity):

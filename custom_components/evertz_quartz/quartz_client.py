@@ -139,7 +139,7 @@ class QuartzClient:
         # Tracks (kind, order) pairs already warned — prevents log/notification spam
         self._warned_orders: set[tuple[str, int]] = set()
         # Highest Order numbers actually seen from the router (in .UV/.A traffic).
-        # Lower bound on the live profile size — drives "Resize to Detected".
+        # Lower bound on the live profile size — drives detection + warnings.
         self.max_src_order_seen = 0
         self.max_dst_order_seen = 0
         # Lock state: dest_order → lock_value (0=unlocked, 255=locked, other=partial)

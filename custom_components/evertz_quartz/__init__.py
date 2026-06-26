@@ -60,11 +60,56 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for cb in mnemonic_listeners:
             hass.loop.call_soon_threadsafe(cb)
 
+    async def _detection_check() -> None:
+        """After connect, compare the detected destination count to the configured
+        size and warn if the profile is over-provisioned.
+
+        The connect-time .I interrogation makes the controller answer .A for real
+        destinations and .E for ones that don't exist, so client.max_dst_order_seen
+        settles at the true count. Detection only — the user applies any change via
+        Configure → Update Profile. Skips silently when the controller ignores .I
+        (detected count stays 0).
+        """
+        await asyncio.sleep(10)
+        data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+        client = data.get("client")
+        if not client or not client._connected:  # noqa: SLF001
+            return
+        configured = effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
+        detected = client.max_dst_order_seen
+        if not (1 <= detected < configured):
+            return
+        rname = router_display_name(entry)
+        _LOGGER.info(
+            "[%s] Over-provisioned: detected %d destination(s), configured %d",
+            rname, detected, configured,
+        )
+        hass.async_create_task(
+            hass.services.async_call(
+                "persistent_notification", "create", {
+                    "notification_id": f"evertz_quartz_{entry.entry_id}_overprovision",
+                    "title": f"Evertz Quartz [{rname}] — Fewer Destinations Than Configured",
+                    "message": (
+                        f"The controller answered interrogation for **{detected}** "
+                        f"destination(s), but this integration is configured for "
+                        f"**{configured}**. The extra destinations are unused placeholders.\n\n"
+                        "To match the controller, open **Configure → Next → Update "
+                        f"Profile** and set **Max Destinations = {detected}** "
+                        "(or upload the profile CSV)."
+                    ),
+                }
+            )
+        )
+        for cb in mismatch_listeners:
+            hass.loop.call_soon_threadsafe(cb)
+
     def _connection_callback(connected: bool) -> None:
         name = router_display_name(entry)
         _LOGGER.info("Evertz Quartz [%s] %s", name, "connected" if connected else "disconnected")
         for cb in connection_listeners:
             hass.loop.call_soon_threadsafe(cb)
+        if connected:
+            hass.loop.call_soon_threadsafe(lambda: hass.async_create_task(_detection_check()))
 
     def _lock_callback(dest_order: int, lock_value: int) -> None:
         """Called by client when a .BA lock state message is received."""
@@ -92,9 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         f"The router reported {label} Order **{order}**, which is outside "
                         f"the configured range (current maximum: **{limit}**). "
                         f"The router profile has likely expanded or changed.\n\n"
-                        "**Fastest fix:** press the **Resize to Detected** button on the "
-                        "device page to grow the profile to the detected size in one click.\n\n"
-                        "**Or update manually:**\n"
+                        "**To fix this:**\n"
                         "1. Click [**Open Configure \u2192**]"
                         "(/config/integrations/integration/evertz_quartz) "
                         f"to go to the Evertz Quartz integrations page\n"

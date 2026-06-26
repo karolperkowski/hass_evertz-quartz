@@ -114,8 +114,8 @@
       "resync_names": {
         "name": "Resync Names"
       },
-      "resize_detected": {
-        "name": "Resize to Detected"
+      "detect_destinations": {
+        "name": "Detect Destinations"
       },
       "clear_csv": {
         "name": "Clear CSV Profile"
