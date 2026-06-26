@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -16,10 +18,34 @@ from .helpers import router_display_name
 
 _LOGGER = logging.getLogger(__name__)
 
+# Per-destination entity unique_id suffixes (after the entry_id prefix):
+#   _dest_{order}          destination select
+#   _dest_source_{order}   read-only source sensor
+#   _lock_{order}          destination lock
+# Sources have no per-source entities (they are dropdown options), so only
+# destination-scaled entities can be orphaned when the matrix shrinks.
+_ORDER_PATTERNS = (
+    re.compile(r"^_dest_source_(\d+)$"),
+    re.compile(r"^_dest_(\d+)$"),
+    re.compile(r"^_lock_(\d+)$"),
+)
+
 
 def _device_info(entry: ConfigEntry):
     from .helpers import device_info as _di
     return _di(entry)
+
+
+def _entity_dest_order(unique_id: str, entry_id: str) -> int | None:
+    """Destination Order encoded in a per-destination entity unique_id, else None."""
+    if not unique_id.startswith(entry_id):
+        return None
+    suffix = unique_id[len(entry_id):]
+    for pat in _ORDER_PATTERNS:
+        m = pat.match(suffix)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 async def async_setup_entry(
@@ -33,6 +59,7 @@ async def async_setup_entry(
         QuartzResyncButton(entry, client, "routes"),
         QuartzResyncButton(entry, client, "names"),
         QuartzDetectDestinationsButton(entry, client),
+        QuartzCleanupButton(entry, client),
         QuartzClearCsvButton(entry, client),
     ])
 
@@ -151,6 +178,67 @@ class QuartzDetectDestinationsButton(ButtonEntity):
         # Refresh the Profile Mismatch sensor
         for cb in self.hass.data[DOMAIN][self._entry.entry_id].get("mismatch_listeners", []):
             self.hass.loop.call_soon_threadsafe(cb)
+
+
+class QuartzCleanupButton(ButtonEntity):
+    """Remove orphaned destination entities left in the registry after the matrix
+    was shrunk — their Order now exceeds the configured Max Destinations, so the
+    integration no longer creates them and they linger as unavailable.
+
+    Registry-only (works while disconnected). Sources have no per-source
+    entities, so only destination-scaled entities are affected.
+    """
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:broom"
+
+    def __init__(self, entry: ConfigEntry, client) -> None:
+        self._entry = entry
+        self._client = client
+        self._attr_unique_id = f"{entry.entry_id}_cleanup_entities"
+
+    @property
+    def name(self) -> str:
+        return "Clean Up Stale Entities"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return _device_info(self._entry)
+
+    async def async_press(self) -> None:
+        reg = er.async_get(self.hass)
+        max_dst = self._client.max_destinations
+        entry_id = self._entry.entry_id
+        router = router_display_name(self._entry)
+
+        removed: list[str] = []
+        for ent in er.async_entries_for_config_entry(reg, entry_id):
+            order = _entity_dest_order(ent.unique_id or "", entry_id)
+            if order is not None and order > max_dst:
+                reg.async_remove(ent.entity_id)
+                removed.append(ent.entity_id)
+
+        if removed:
+            shown = "\n".join(f"- `{e}`" for e in sorted(removed)[:40])
+            extra = "" if len(removed) <= 40 else f"\n…and {len(removed) - 40} more."
+            message = (
+                f"Removed **{len(removed)}** stale destination "
+                f"entit{'y' if len(removed) == 1 else 'ies'} beyond the configured size "
+                f"(Max Destinations = **{max_dst}**):\n\n{shown}{extra}"
+            )
+        else:
+            message = (
+                "No stale entities found — all destination entities are within the "
+                f"configured size (Max Destinations = **{max_dst}**)."
+            )
+
+        _LOGGER.info("[%s] Cleanup stale entities: removed %d", router, len(removed))
+        await self.hass.services.async_call("persistent_notification", "create", {
+            "notification_id": f"evertz_quartz_{entry_id}_cleanup",
+            "title": f"Evertz Quartz [{router}] — Entity Cleanup",
+            "message": message,
+        })
 
 
 class QuartzClearCsvButton(ButtonEntity):

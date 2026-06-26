@@ -117,6 +117,9 @@
       "detect_destinations": {
         "name": "Detect Destinations"
       },
+      "cleanup_entities": {
+        "name": "Clean Up Stale Entities"
+      },
       "clear_csv": {
         "name": "Clear CSV Profile"
       }
