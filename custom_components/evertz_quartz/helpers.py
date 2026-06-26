@@ -16,6 +16,35 @@ def effective(entry: ConfigEntry, key: str, default):
     return entry.data.get(key, default)
 
 
+async def apply_resize(hass, entry: ConfigEntry, new_src: int, new_dst: int) -> bool:
+    """Persist a new matrix size to entry.data and reload to rebuild entities.
+
+    Shared by the options-flow profile step and the "Resize to Detected" button
+    so there is a single path for changing the configured size. Counts live in
+    entry.data (never entry.options), so CSV names already stored for slots
+    within the new range survive the reload. Returns True when a change was
+    applied, False when the requested size already matched.
+    """
+    from .const import (
+        CONF_MAX_DESTINATIONS,
+        CONF_MAX_SOURCES,
+        DEFAULT_MAX_DESTINATIONS,
+        DEFAULT_MAX_SOURCES,
+    )
+
+    cur_src = effective(entry, CONF_MAX_SOURCES, DEFAULT_MAX_SOURCES)
+    cur_dst = effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
+    if new_src == cur_src and new_dst == cur_dst:
+        return False
+
+    new_data = dict(entry.data)
+    new_data[CONF_MAX_SOURCES] = new_src
+    new_data[CONF_MAX_DESTINATIONS] = new_dst
+    hass.config_entries.async_update_entry(entry, data=new_data)
+    hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+    return True
+
+
 def readonly_destinations(entry: ConfigEntry) -> set[int]:
     """Destination Orders marked read-only in the Configure panel."""
     from .const import CONF_READONLY_DESTINATIONS
@@ -92,5 +121,5 @@ def device_info(entry: ConfigEntry):
         model=f"EQX / EQT / MAGNUM — {host}:{port}",
         sw_version=integ_version,
         hw_version=f"{max_src} src × {max_dst} dst — {csv_label}",
-        configuration_url=f"http://{host}:{port}",
+        configuration_url=f"http://{host}",
     )

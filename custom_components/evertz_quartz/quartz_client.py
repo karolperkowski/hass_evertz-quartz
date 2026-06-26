@@ -138,6 +138,10 @@ class QuartzClient:
         self._lock_callback = lock_callback
         # Tracks (kind, order) pairs already warned — prevents log/notification spam
         self._warned_orders: set[tuple[str, int]] = set()
+        # Highest Order numbers actually seen from the router (in .UV/.A traffic).
+        # Lower bound on the live profile size — drives "Resize to Detected".
+        self.max_src_order_seen = 0
+        self.max_dst_order_seen = 0
         # Lock state: dest_order → lock_value (0=unlocked, 255=locked, other=partial)
         self.locks: dict[int, int] = {}
         self._reader: asyncio.StreamReader | None = None
@@ -364,6 +368,12 @@ class QuartzClient:
                 "reconnect_delay": self.reconnect_delay,
                 "connect_timeout": self.connect_timeout,
             },
+            "detection": {
+                "max_source_order_seen":      self.max_src_order_seen,
+                "max_destination_order_seen": self.max_dst_order_seen,
+                "suggested_max_sources":      max(self.max_sources, self.max_src_order_seen),
+                "suggested_max_destinations": max(self.max_destinations, self.max_dst_order_seen),
+            },
             "stats": {
                 "messages_sent":        self.stats.messages_sent,
                 "messages_received":    self.stats.messages_received,
@@ -553,6 +563,9 @@ class QuartzClient:
                     "%sRoute confirmed (.I reply): %s → %s (Order %d, no change)", self._pfx,
                     dest_name, src_name, src_order,
                 )
+            # Interrogate replies also reveal Orders the router uses
+            self._check_order_range("src", src_order)
+            self._check_order_range("dst", dest_order)
             return
 
         # Destination mnemonic (non-MAGNUM routers): .RD{order},{name}
@@ -638,7 +651,11 @@ class QuartzClient:
         self._log.debug("%sUnhandled: %r (hex: %s)", self._pfx, line, raw_hex)
 
     def _check_order_range(self, kind: str, order: int) -> None:
-        """Warn once per session if an Order number exceeds the configured maximum."""
+        """Record the highest Order seen, and warn once if it exceeds the max."""
+        if kind == "src":
+            self.max_src_order_seen = max(self.max_src_order_seen, order)
+        else:
+            self.max_dst_order_seen = max(self.max_dst_order_seen, order)
         limit = self.max_sources if kind == "src" else self.max_destinations
         label = "source" if kind == "src" else "destination"
         conf  = "max_sources" if kind == "src" else "max_destinations"

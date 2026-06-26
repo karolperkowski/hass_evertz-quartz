@@ -143,17 +143,32 @@ class QuartzProfileMismatchSensor(BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict:
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        client = entry_data.get("client")
         orders = entry_data.get("mismatch_orders", set())
-        if not orders:
-            return {"out_of_range_orders": [], "action_required": False}
-        src_orders = sorted(o for k, o in orders if k == "src")
-        dst_orders = sorted(o for k, o in orders if k == "dst")
-        return {
-            "out_of_range_source_orders": src_orders,
-            "out_of_range_destination_orders": dst_orders,
-            "action_required": True,
-            "resolution": "Go to Settings → Devices & Services → Evertz Quartz → Configure → Update Profile",
+
+        attrs: dict = {
+            "out_of_range_source_orders": sorted(o for k, o in orders if k == "src"),
+            "out_of_range_destination_orders": sorted(o for k, o in orders if k == "dst"),
+            "action_required": bool(orders),
         }
+        if client is not None:
+            cfg_src,  cfg_dst  = client.max_sources, client.max_destinations
+            seen_src, seen_dst = client.max_src_order_seen, client.max_dst_order_seen
+            attrs.update({
+                "configured_max_sources":      cfg_src,
+                "configured_max_destinations": cfg_dst,
+                # Highest Orders the router has actually used — a lower bound
+                "detected_min_sources":        seen_src,
+                "detected_min_destinations":   seen_dst,
+                "suggested_max_sources":       max(cfg_src, seen_src),
+                "suggested_max_destinations":  max(cfg_dst, seen_dst),
+            })
+        if orders:
+            attrs["resolution"] = (
+                "Press the 'Resize to Detected' button on this device, or go to "
+                "Settings → Devices & Services → Evertz Quartz → Configure → Update Profile"
+            )
+        return attrs
 
     async def async_added_to_hass(self) -> None:
         """Register as a mismatch listener so we update when the client fires."""
