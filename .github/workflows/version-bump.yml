@@ -1,0 +1,22 @@
+name: Version bump
+
+# Enforces the CLAUDE.md rule: every change must bump the integration version.
+# Fails a PR when custom_components/evertz_quartz/manifest.json "version" is not
+# greater than the version on the base branch.
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  version-bump:
+    name: manifest.json version increased
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch base branch
+        run: git fetch origin "${{ github.base_ref }}" --quiet
+      - name: Check version was bumped
+        run: python3 .github/scripts/check_version_bump.py "${{ github.base_ref }}"

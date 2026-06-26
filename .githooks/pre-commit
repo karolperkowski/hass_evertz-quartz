@@ -1,0 +1,27 @@
+#!/usr/bin/env sh
+# Local enforcement of the CLAUDE.md rule: bump the integration version on
+# every commit. Enable once per clone with:
+#
+#     git config core.hooksPath .githooks
+#
+# Blocks a commit when manifest.json "version" is unchanged from HEAD.
+# Bypass intentionally (rarely) with:  git commit --no-verify
+
+MANIFEST="custom_components/evertz_quartz/manifest.json"
+extract='s/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+
+# Version staged for this commit (index) and version in the last commit (HEAD)
+staged=$(git show ":$MANIFEST" 2>/dev/null | sed -n "$extract")
+head=$(git show "HEAD:$MANIFEST" 2>/dev/null | sed -n "$extract")
+
+# No manifest in the index (e.g. unrelated repo state) or initial commit: allow.
+[ -z "$staged" ] && exit 0
+[ -z "$head" ] && exit 0
+
+if [ "$staged" = "$head" ]; then
+    echo "pre-commit: manifest.json version ($staged) was not bumped." >&2
+    echo "Per CLAUDE.md, bump \"version\" in $MANIFEST in this commit" >&2
+    echo "(or use 'git commit --no-verify' to bypass intentionally)." >&2
+    exit 1
+fi
+exit 0
