@@ -225,3 +225,11 @@ returns PASS/FAIL verdicts with specific findings.
 - All routing uses Order numbers. Never use Port Numbers in commands.
 
 - CSV import always reloads. Never apply CSV data live without reload.
+
+- **Bump the version on every commit.** Update `version` in
+  `custom_components/evertz_quartz/manifest.json` in the same commit as any
+  change — never leave it stale. Use semantic versioning: patch (`x.y.Z`) for
+  fixes and docs, minor (`x.Y.0`) for new features/entities, major (`X.0.0`)
+  for breaking changes. End the commit subject with the new version
+  (e.g. `… v1.14.1`), matching existing history. HACS serves releases by
+  version, so a stale version means users never receive the update.
