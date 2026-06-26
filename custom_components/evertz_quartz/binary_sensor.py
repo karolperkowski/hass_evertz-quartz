@@ -13,8 +13,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
-from .helpers import router_display_name
+from .const import CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS, DOMAIN
+from .helpers import effective, router_display_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -136,9 +136,18 @@ class QuartzProfileMismatchSensor(BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        """True when any out-of-range Order has been seen this session."""
+        """ON when the router used an Order beyond the configured size, or when
+        fewer destinations exist than configured (over-provisioned placeholder)."""
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
-        return bool(entry_data.get("mismatch_orders"))
+        if entry_data.get("mismatch_orders"):
+            return True
+        client = entry_data.get("client")
+        if client is not None:
+            configured = effective(self._entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
+            detected = client.max_dst_order_seen
+            if 1 <= detected < configured:
+                return True
+        return False
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -149,33 +158,48 @@ class QuartzProfileMismatchSensor(BinarySensorEntity):
         attrs: dict = {
             "out_of_range_source_orders": sorted(o for k, o in orders if k == "src"),
             "out_of_range_destination_orders": sorted(o for k, o in orders if k == "dst"),
-            "action_required": bool(orders),
         }
+        over_provisioned = False
         if client is not None:
             cfg_src,  cfg_dst  = client.max_sources, client.max_destinations
             seen_src, seen_dst = client.max_src_order_seen, client.max_dst_order_seen
+            over_provisioned = bool(1 <= seen_dst < cfg_dst)
             attrs.update({
                 "configured_max_sources":      cfg_src,
                 "configured_max_destinations": cfg_dst,
-                # Highest Orders the router has actually used — a lower bound
+                # Destinations the controller acknowledged via .I/.A interrogation
+                # (0 = could not detect — e.g. controller ignores .I)
+                "detected_destinations":       seen_dst,
+                "destinations_over_provisioned": over_provisioned,
+                "suggested_max_destinations":  seen_dst if seen_dst >= 1 else cfg_dst,
+                # Sources can't be enumerated over the protocol — grow-only hint
                 "detected_min_sources":        seen_src,
-                "detected_min_destinations":   seen_dst,
                 "suggested_max_sources":       max(cfg_src, seen_src),
-                "suggested_max_destinations":  max(cfg_dst, seen_dst),
             })
-        if orders:
+        action = bool(orders) or over_provisioned
+        attrs["action_required"] = action
+        if action:
             attrs["resolution"] = (
-                "Press the 'Resize to Detected' button on this device, or go to "
-                "Settings → Devices & Services → Evertz Quartz → Configure → Update Profile"
+                "Open Settings → Devices & Services → Evertz Quartz → Configure → "
+                "Update Profile and set Max Destinations to the detected value "
+                "(or upload the profile CSV)."
             )
         return attrs
 
     async def async_added_to_hass(self) -> None:
-        """Register as a mismatch listener so we update when the client fires."""
+        """Update on mismatch events and on route updates (which carry the
+        detected destination count via .A/.UV replies)."""
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         if "mismatch_listeners" in entry_data:
             entry_data["mismatch_listeners"].append(self._on_mismatch)
+        if "route_listeners" in entry_data:
+            entry_data["route_listeners"].append(self._on_route)
 
     @callback
     def _on_mismatch(self) -> None:
+        self.async_write_ha_state()
+
+    @callback
+    def _on_route(self, dest_order: int, src_order: int, levels: str) -> None:
+        # A new .A/.UV reply can change the detected destination count
         self.async_write_ha_state()
