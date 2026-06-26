@@ -1,0 +1,50 @@
+name: Release
+
+# Auto-publish a GitHub Release (which HACS serves) whenever the integration
+# version changes on main. Combined with the version-bump rule, every merged
+# change ships a release with zero manual steps.
+#
+# Idempotent: if a release for the manifest's version already exists, it does
+# nothing. Can also be run manually from the Actions tab (workflow_dispatch).
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'custom_components/evertz_quartz/manifest.json'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish release from manifest version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read manifest version
+        id: ver
+        run: |
+          version="$(python3 -c "import json; print(json.load(open('custom_components/evertz_quartz/manifest.json'))['version'])")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Manifest version: ${version}"
+
+      - name: Create release if the tag is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: "v${{ steps.ver.outputs.version }}"
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — nothing to do."
+            exit 0
+          fi
+          echo "Creating release $TAG at $GITHUB_SHA"
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes

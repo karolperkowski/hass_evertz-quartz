@@ -234,4 +234,6 @@ returns PASS/FAIL verdicts with specific findings.
   (e.g. `… v1.14.1`), matching existing history. HACS serves releases by
   version, so a stale version means users never receive the update. Enforced
   on PRs by `.github/workflows/version-bump.yml`; enable the local pre-commit
-  check once with `git config core.hooksPath .githooks`.
+  check once with `git config core.hooksPath .githooks`. On merge to `main`,
+  `.github/workflows/release.yml` auto-publishes a GitHub Release `v{version}`
+  (the form HACS installs from) — no manual release step.
