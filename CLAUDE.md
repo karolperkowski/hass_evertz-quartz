@@ -104,6 +104,14 @@ VP, DST, 323, QC4720, 0, 1
 - `.UV{level}{dest_order},{src_order}` received for external changes
 - `.I{level}{dest_order}` sent on connect to query current state
 
+### Startup sync notification
+On the first connect after startup/reload, a persistent notification tells the
+user routes/locks/names are still synchronizing and entities may show Unknown
+(estimate from `client.estimated_sync_seconds()`, derived from sweep pacing).
+The client fires `sync_callback` when the connect-time sweep has been sent;
+the notification is dismissed ~2 s later (reply grace), on disconnect, and on
+unload. Reconnects during the same session do not re-announce.
+
 ### CSV re-import always reloads
 Any CSV import via the Configure panel triggers a full HA reload.
 Source Order values may shift even if counts are unchanged (profile reordering).
