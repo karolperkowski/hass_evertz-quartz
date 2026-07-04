@@ -53,15 +53,18 @@ def notify_blocked_route(
     src_order: int | None = None,
     user_id: str | None = None,
     origin: str = "select",
+    action: str = "route",
 ) -> None:
-    """Surface a blocked take to the user, identically from every path.
+    """Surface a blocked operation to the user, identically from every path.
 
     Fires ``evertz_quartz_route_blocked`` on the event bus (for automations —
     mobile push, logging, etc.) and raises a persistent notification.
-    Both enforcement paths call this: the destination select entity
-    (origin="select") and the evertz_quartz.route service (origin="service").
+    Enforcement paths: the destination select entity (origin="select"), the
+    evertz_quartz.route service (origin="service"), and the destination lock
+    entity (origin="lock").
 
     reason: "read_only" | "locked" | "cross_namespace"
+    action: "route" | "lock" | "unlock" — what was attempted and blocked
     """
     from .const import EVENT_ROUTE_BLOCKED
 
@@ -79,6 +82,7 @@ def notify_blocked_route(
         "entry_id":         entry.entry_id,
         "reason":           reason,
         "origin":           origin,
+        "action":           action,
         "destination":      dest_order,
         "destination_name": dest_name,
         "source":           src_order,
@@ -88,11 +92,17 @@ def notify_blocked_route(
 
     if reason == "read_only":
         notif_id = f"evertz_quartz_{entry.entry_id}_readonly_{dest_order}"
-        title    = f"Evertz Quartz [{rname}] — Route Blocked: Read-Only Destination"
         blocked_for = "your user account" if user_id else "automations and scripts"
-        message  = (
+        if action == "route":
+            title_action = "Route"
+            blocked_what = "Routes to this destination are"
+        else:  # "lock" / "unlock"
+            title_action = action.capitalize()
+            blocked_what = f"{action.capitalize()}ing this destination is"
+        title   = f"Evertz Quartz [{rname}] — {title_action} Blocked: Read-Only Destination"
+        message = (
             f"**{dest_name}** is marked **read-only**.\n\n"
-            f"Routes to this destination are blocked for {blocked_for}.\n\n"
+            f"{blocked_what} blocked for {blocked_for}.\n\n"
             "An administrator can change this under "
             "**Settings → Devices & Services → Evertz Quartz → Configure**."
         )

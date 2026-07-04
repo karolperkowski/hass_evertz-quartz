@@ -7,11 +7,18 @@ import logging
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS, DOMAIN
-from .helpers import device_info, effective, router_display_name
+from .helpers import (
+    device_info,
+    effective,
+    notify_blocked_route,
+    router_display_name,
+    user_can_route,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,8 +119,38 @@ class QuartzDestinationLock(LockEntity):
             "panel_clearable":       lock_val == 255,  # only software locks can be cleared remotely
         }
 
+    def _enforce_readonly(self, action: str) -> None:
+        """Block lock/unlock on read-only destinations for non-allowed users.
+
+        Same permission model as routing: read-only destinations accept lock
+        changes only from users in readonly_allowed_users; calls without a
+        user context (automations, scripts) are blocked. Notifies via the
+        shared blocked-route path, then raises for the service caller.
+        """
+        user_id = self._context.user_id if self._context else None
+        if user_can_route(self._entry, self._order, user_id):
+            return
+        rname     = router_display_name(self._entry)
+        dest_name = self._client.destination_names.get(self._order, f"Dest {self._order}")
+        _LOGGER.warning(
+            "[%s] %s blocked: destination %s (Order %d) is read-only for this user "
+            "(user_id=%s)",
+            rname, action.capitalize(), dest_name, self._order, user_id or "none",
+        )
+        notify_blocked_route(
+            self.hass, self._entry, self._client,
+            reason="read_only", dest_order=self._order,
+            user_id=user_id, origin="lock", action=action,
+        )
+        raise ServiceValidationError(
+            f"{action.capitalize()} blocked: destination {dest_name!r} "
+            f"(Order {self._order}) is read-only for this user. An administrator "
+            "can change this in the integration's Configure panel."
+        )
+
     async def async_lock(self, **kwargs) -> None:
         """Lock this destination via .BL command."""
+        self._enforce_readonly("lock")
         rname     = router_display_name(self._entry)
         dest_name = self._client.destination_names.get(self._order, f"Dest {self._order}")
         _LOGGER.info("[%s] Locking destination %s (Order %d)", rname, dest_name, self._order)
@@ -125,6 +162,7 @@ class QuartzDestinationLock(LockEntity):
         Note: if lock_value is 1-254, this is a panel lock set by a hardware Q-link panel.
         .BU may not clear it — the panel itself must release the lock.
         """
+        self._enforce_readonly("unlock")
         rname     = router_display_name(self._entry)
         dest_name = self._client.destination_names.get(self._order, f"Dest {self._order}")
         lock_val  = self._client.locks.get(self._order, 0)
