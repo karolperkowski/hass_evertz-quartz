@@ -7,9 +7,8 @@ from pathlib import Path
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsFlow
 from homeassistant.components.file_upload import process_uploaded_file
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
     FileSelector,
     FileSelectorConfig,
@@ -208,7 +207,7 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
 
     # ── Step 1: Connection settings ───────────────────────────────────────
 
-    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: dict | None = None) -> ConfigFlowResult:
         """
         Connection settings — levels, reconnect delay, connection timeout.
         Saving this step moves to the Profile step.
@@ -252,7 +251,7 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
 
     # ── Step 2: Profile ───────────────────────────────────────────────────
 
-    async def async_step_profile(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_profile(self, user_input: dict | None = None) -> ConfigFlowResult:
         """
         Router profile — upload a new CSV or adjust counts manually.
 
@@ -332,7 +331,7 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
 
     # ── Step 3: Confirm ───────────────────────────────────────────────────
 
-    async def async_step_confirm(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_confirm(self, user_input: dict | None = None) -> ConfigFlowResult:
         """
         Confirm step — shown before any reload-triggering change.
         Displays a diff summary and asks the user to confirm or cancel.
@@ -407,7 +406,7 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         destination_namespaces: dict[int, str] | None = None,
         hidden_source_orders: list[int] | None = None,
         hidden_destination_orders: list[int] | None = None,
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """
         Persist all changes and optionally reload.
 

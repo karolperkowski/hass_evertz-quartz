@@ -1,0 +1,3 @@
+# Test dependencies — pytest-homeassistant-custom-component pins the matching
+# homeassistant version and the pytest stack used by HA core.
+pytest-homeassistant-custom-component>=0.13.300

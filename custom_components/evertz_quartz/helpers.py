@@ -154,7 +154,8 @@ def device_info(entry: ConfigEntry):
 
     # Read from manifest.json directly — most reliable for custom components
     try:
-        import json, pathlib
+        import json
+        import pathlib
         manifest_path = pathlib.Path(__file__).parent / "manifest.json"
         integ_version = json.loads(manifest_path.read_text())["version"]
     except Exception:  # noqa: BLE001

@@ -10,8 +10,8 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components.file_upload import process_uploaded_file
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_PORT
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
     FileSelector,
     FileSelectorConfig,
@@ -126,7 +126,7 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     # ── Step 1: connection ────────────────────────────────────────────────
 
-    async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_user(self, user_input: dict | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -161,7 +161,7 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     # ── Step 2: profile / CSV ─────────────────────────────────────────────
 
-    async def async_step_profile(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_profile(self, user_input: dict | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:

@@ -357,9 +357,11 @@ def _parse_single_section(text: str) -> ParseResult | None:
             continue
         first = row[0].strip().lower()
         if first in src_headers:
-            current = "src"; continue
+            current = "src"
+            continue
         if first in dst_headers:
-            current = "dst"; continue
+            current = "dst"
+            continue
         if current is None:
             continue
 

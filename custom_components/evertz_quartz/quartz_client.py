@@ -378,10 +378,12 @@ class QuartzClient:
             cmd_stripped = cmd.strip()
             self._log.debug("%sTX → %s", self._pfx, cmd_stripped)
             self.stats.record_trace("TX", cmd_stripped)
+            # Count as pending before writing — the reader task may process
+            # the reply during drain()/sleep() below.
+            self._mnemonic_pending += 1
             self._writer.write(cmd.encode())
             await self._writer.drain()
             self.stats.messages_sent += 1
-            self._mnemonic_pending += 1
             await asyncio.sleep(0.02)
 
     def get_diagnostics(self) -> dict:
