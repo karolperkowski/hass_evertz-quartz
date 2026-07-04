@@ -26,7 +26,7 @@ from .const import (
     DEFAULT_RECONNECT_DELAY,
     DOMAIN,
 )
-from .helpers import effective, router_display_name, user_can_route
+from .helpers import effective, notify_blocked_route, router_display_name, user_can_route
 from .quartz_client import QuartzClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -297,10 +297,19 @@ def _register_route_service(hass: HomeAssistant) -> None:
                     f"Multiple routers configured ({names}). Specify device_id or router_name."
                 )
 
+        # Blocked takes raise ServiceValidationError for the caller AND go
+        # through notify_blocked_route(), so automations/scripts that would
+        # otherwise fail silently still surface an event + notification.
+
         # Read-only check — block takes from users not in the allowed list.
         # Calls without a user context (automations, scripts) are blocked too.
         if target_entry and not user_can_route(target_entry, destination, call.context.user_id):
             dest_name = client.destination_names.get(destination, f"Dest {destination}")
+            notify_blocked_route(
+                hass, target_entry, client,
+                reason="read_only", dest_order=destination, src_order=source,
+                user_id=call.context.user_id, origin="service",
+            )
             raise ServiceValidationError(
                 f"Route blocked: destination {dest_name!r} (Order {destination}) is "
                 "read-only for this user. An administrator can change this in the "
@@ -310,6 +319,12 @@ def _register_route_service(hass: HomeAssistant) -> None:
         # Lock check — block routing to locked destinations
         if client.locks.get(destination, 0) > 0:
             dest_name = client.destination_names.get(destination, f"Dest {destination}")
+            if target_entry:
+                notify_blocked_route(
+                    hass, target_entry, client,
+                    reason="locked", dest_order=destination, src_order=source,
+                    user_id=call.context.user_id, origin="service",
+                )
             raise ServiceValidationError(
                 f"Route blocked: destination {dest_name!r} (Order {destination}) is locked. "
                 "Unlock it before routing."
@@ -321,6 +336,12 @@ def _register_route_service(hass: HomeAssistant) -> None:
         if dest_ns and src_ns and dest_ns != src_ns:
             dest_name = client.destination_names.get(destination, f"Dest {destination}")
             src_name  = client.source_names.get(source, f"Source {source}")
+            if target_entry:
+                notify_blocked_route(
+                    hass, target_entry, client,
+                    reason="cross_namespace", dest_order=destination, src_order=source,
+                    user_id=call.context.user_id, origin="service",
+                )
             raise ServiceValidationError(
                 f"Cross-namespace route blocked: source {src_name!r} (namespace={src_ns}) "
                 f"cannot route to {dest_name!r} (namespace={dest_ns}). "

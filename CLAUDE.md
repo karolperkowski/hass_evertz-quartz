@@ -166,6 +166,16 @@ The destination select entity exposes `read_only` and
 read-only destinations as display-only for the current frontend user
 (`hass.user.id`). Enforcement always stays server-side.
 
+### Blocked-route notifications
+Every blocked take — read-only, locked, or cross-namespace — goes through
+`helpers.notify_blocked_route()`, which fires `evertz_quartz_route_blocked`
+on the HA event bus and raises a persistent notification. Both enforcement
+paths use it: the destination select entity (`origin="select"`) and the
+`evertz_quartz.route` service (`origin="service"`, which additionally raises
+`ServiceValidationError` for the caller). Event data: `router`, `entry_id`,
+`reason` (`read_only`/`locked`/`cross_namespace`), `origin`, `destination`,
+`destination_name`, `source`, `source_name`, `user_id`.
+
 ---
 
 ## Options Flow (Configure panel)
