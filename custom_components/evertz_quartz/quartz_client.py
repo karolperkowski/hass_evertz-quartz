@@ -95,6 +95,7 @@ class QuartzClient:
         connection_callback: Callable[[bool], None] | None = None,
         notify_callback: Callable[[str, int], None] | None = None,
         lock_callback: Callable[[int, int], None] | None = None,
+        sync_callback: Callable[[], None] | None = None,
         reconnect_delay: int = DEFAULT_RECONNECT_DELAY,
         connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
     ) -> None:
@@ -136,6 +137,9 @@ class QuartzClient:
         self._connection_callback = connection_callback
         self._notify_callback = notify_callback
         self._lock_callback = lock_callback
+        # Called after the connect-time sync sweep (routes/locks/names) has
+        # been fully sent — lets HA dismiss the "synchronizing" notification.
+        self._sync_callback = sync_callback
         # Tracks (kind, order) pairs already warned — prevents log/notification spam
         self._warned_orders: set[tuple[str, int]] = set()
         # Highest Order numbers actually seen from the router (in .UV/.A traffic).
@@ -398,6 +402,16 @@ class QuartzClient:
 
     # ── Connection management ─────────────────────────────────────────────
 
+    def estimated_sync_seconds(self) -> int:
+        """Rough duration of the connect-time sync sweep, derived from the
+        send pacing (.I 50 ms + .BI 50 ms per destination; .RD/.RT 20 ms per
+        port when no CSV is loaded) plus a reply grace period."""
+        secs = self.max_destinations * 0.05          # .I route interrogation
+        secs += self.max_destinations * 0.05         # .BI lock interrogation
+        if not self.csv_loaded:
+            secs += (self.max_destinations + self.max_sources) * 0.02
+        return max(3, round(secs + 2))
+
     async def _run_loop(self) -> None:
         while self._running:
             try:
@@ -406,6 +420,8 @@ class QuartzClient:
                 await self._query_all_locks()
                 if not self.csv_loaded:
                     await self.query_all_mnemonics()
+                if self._sync_callback:
+                    self._sync_callback()
                 await self._listen()
             except asyncio.CancelledError:
                 break

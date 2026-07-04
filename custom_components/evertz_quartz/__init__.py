@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -103,13 +104,74 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for cb in mismatch_listeners:
             hass.loop.call_soon_threadsafe(cb)
 
+    # ── Startup sync notification ─────────────────────────────────────────
+    # After a restart/reload the destination selects show "Unknown" until the
+    # connect-time interrogation sweep (.I routes, .BI locks, .RD/.RT names)
+    # completes. Tell the user that's expected — once, on the first connect —
+    # and clear the message automatically when the sweep finishes.
+    sync_notif_id = f"evertz_quartz_{entry.entry_id}_startup_sync"
+    sync_state: dict = {"notified": False, "t0": None}
+
+    def _dismiss_sync_notification() -> None:
+        hass.async_create_task(
+            hass.services.async_call(
+                "persistent_notification", "dismiss",
+                {"notification_id": sync_notif_id},
+            )
+        )
+
+    async def _announce_sync() -> None:
+        client = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("client")
+        if not client:
+            return
+        rname = router_display_name(entry)
+        est = client.estimated_sync_seconds()
+        names_part = (
+            "" if client.csv_loaded
+            else ", and querying source/destination names"
+        )
+        await hass.services.async_call("persistent_notification", "create", {
+            "notification_id": sync_notif_id,
+            "title": f"Evertz Quartz [{rname}] — Synchronizing",
+            "message": (
+                f"Connected to the router — now synchronizing **current routes "
+                f"and lock states**{names_part}.\n\n"
+                f"Destination entities may show **Unknown** until this completes "
+                f"(roughly **~{est} seconds** for this profile size).\n\n"
+                "This notification clears automatically when the sync finishes."
+            ),
+        })
+
+    def _sync_complete_callback() -> None:
+        """Called by the client when the connect-time sync sweep has been sent."""
+        async def _finish() -> None:
+            await asyncio.sleep(2)  # grace for the last replies to drain
+            _dismiss_sync_notification()
+            client = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("client")
+            t0 = sync_state.get("t0")
+            elapsed = f" in {time.monotonic() - t0:.1f}s" if t0 else ""
+            if client:
+                _LOGGER.info(
+                    "[%s] Startup sync complete%s — %d routes, %d lock states known",
+                    router_display_name(entry), elapsed,
+                    len(client.routes), len(client.locks),
+                )
+        hass.loop.call_soon_threadsafe(lambda: hass.async_create_task(_finish()))
+
     def _connection_callback(connected: bool) -> None:
         name = router_display_name(entry)
         _LOGGER.info("Evertz Quartz [%s] %s", name, "connected" if connected else "disconnected")
         for cb in connection_listeners:
             hass.loop.call_soon_threadsafe(cb)
         if connected:
+            if not sync_state["notified"]:
+                sync_state["notified"] = True
+                sync_state["t0"] = time.monotonic()
+                hass.loop.call_soon_threadsafe(lambda: hass.async_create_task(_announce_sync()))
             hass.loop.call_soon_threadsafe(lambda: hass.async_create_task(_detection_check()))
+        else:
+            # Connection dropped — a lingering "synchronizing" message would lie
+            hass.loop.call_soon_threadsafe(_dismiss_sync_notification)
 
     def _lock_callback(dest_order: int, lock_value: int) -> None:
         """Called by client when a .BA lock state message is received."""
@@ -181,6 +243,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         connection_callback=_connection_callback,
         notify_callback=_notify_callback,
         lock_callback=_lock_callback,
+        sync_callback=_sync_complete_callback,
         reconnect_delay=effective(entry, CONF_RECONNECT_DELAY,  DEFAULT_RECONNECT_DELAY),
         connect_timeout=effective(entry, CONF_CONNECT_TIMEOUT,  DEFAULT_CONNECT_TIMEOUT),
     )
@@ -380,4 +443,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         client: QuartzClient = data.get("client")
         if client:
             await client.stop()
+        # Don't leave a stale "synchronizing" message behind on unload/reload
+        await hass.services.async_call(
+            "persistent_notification", "dismiss",
+            {"notification_id": f"evertz_quartz_{entry.entry_id}_startup_sync"},
+        )
     return unload_ok
