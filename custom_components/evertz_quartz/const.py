@@ -32,6 +32,12 @@ DEFAULT_CONNECT_TIMEOUT = 10   # seconds
 # Quartz protocol constants
 QUARTZ_ACK = ".A"
 
+# Event fired on the HA bus whenever a take is blocked (read-only destination,
+# locked destination, or cross-namespace route) — from the select entity and
+# the evertz_quartz.route service alike. Automations can trigger on it to
+# alert the user (e.g. mobile push).
+EVENT_ROUTE_BLOCKED = "evertz_quartz_route_blocked"
+
 # Profile mismatch tracking (stored in entry.data, cleared on reload)
 CONF_PROFILE_MISMATCH = "profile_mismatch_orders"  # list of out-of-range Orders seen
 

@@ -16,7 +16,13 @@ from .const import (
     DEFAULT_MAX_DESTINATIONS,
     DOMAIN,
 )
-from .helpers import effective, router_display_name, readonly_destinations, user_can_route
+from .helpers import (
+    effective,
+    notify_blocked_route,
+    readonly_destinations,
+    router_display_name,
+    user_can_route,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -178,19 +184,10 @@ class QuartzDestinationSelect(SelectEntity):
                 "(user_id=%s)",
                 rname, dest_name, self._order, user_id or "none",
             )
-            self.hass.async_create_task(
-                self.hass.services.async_call(
-                    "persistent_notification", "create", {
-                        "notification_id": f"evertz_quartz_{self._entry.entry_id}_readonly_{self._order}",
-                        "title": f"Evertz Quartz [{rname}] — Route Blocked: Read-Only Destination",
-                        "message": (
-                            f"**{dest_name}** is marked **read-only**.\n\n"
-                            "Routes to this destination are blocked for your user account.\n\n"
-                            "An administrator can change this under "
-                            "**Settings → Devices & Services → Evertz Quartz → Configure**."
-                        ),
-                    }
-                )
+            notify_blocked_route(
+                self.hass, self._entry, self._client,
+                reason="read_only", dest_order=self._order, src_order=src_order,
+                user_id=user_id, origin="select",
             )
             return  # Do NOT route
 
@@ -202,18 +199,10 @@ class QuartzDestinationSelect(SelectEntity):
                 "[%s] Route blocked: destination %s (Order %d) is locked",
                 rname, dest_name, self._order,
             )
-            self.hass.async_create_task(
-                self.hass.services.async_call(
-                    "persistent_notification", "create", {
-                        "notification_id": f"evertz_quartz_{self._entry.entry_id}_locked_{self._order}",
-                        "title": f"Evertz Quartz [{rname}] — Route Blocked: Destination Locked",
-                        "message": (
-                            f"**{dest_name}** is currently **locked**.\n\n"
-                            "Routes to this destination are blocked until it is unlocked.\n\n"
-                            f"Use the **{dest_name} Lock** entity on the device card to unlock it."
-                        ),
-                    }
-                )
+            notify_blocked_route(
+                self.hass, self._entry, self._client,
+                reason="locked", dest_order=self._order, src_order=src_order,
+                user_id=user_id, origin="select",
             )
             return  # Do NOT route
 
@@ -230,22 +219,10 @@ class QuartzDestinationSelect(SelectEntity):
                 "These belong to different physical routers.",
                 rname, option, src_ns, dest_name, dest_ns,
             )
-            # Fire persistent notification (keyed per entry so it replaces itself)
-            notif_id = f"evertz_quartz_{self._entry.entry_id}_cross_namespace"
-            self.hass.async_create_task(
-                self.hass.services.async_call(
-                    "persistent_notification", "create", {
-                        "notification_id": notif_id,
-                        "title": f"Evertz Quartz [{rname}] — Cross-Namespace Route Blocked",
-                        "message": (
-                            f"**Route blocked:** `{option}` (namespace: **{src_ns}**)"
-                            f" → `{dest_name}` (namespace: **{dest_ns}**)\n\n"
-                            "These sources and destinations belong to different physical "
-                            "routers and cannot be cross-routed.\n\n"
-                            f"Only **{dest_ns}** sources are valid for `{dest_name}`."
-                        ),
-                    }
-                )
+            notify_blocked_route(
+                self.hass, self._entry, self._client,
+                reason="cross_namespace", dest_order=self._order, src_order=src_order,
+                user_id=user_id, origin="select",
             )
             return  # Do NOT route
 
