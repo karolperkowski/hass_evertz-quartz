@@ -15,7 +15,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS, DOMAIN
-from .helpers import effective
+from .helpers import effective, subscribe_listener
 
 if TYPE_CHECKING:
     from homeassistant.helpers.entity import DeviceInfo
@@ -100,7 +100,9 @@ class QuartzConnectedSensor(BinarySensorEntity):
     async def async_added_to_hass(self) -> None:
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         if "connection_listeners" in entry_data:
-            entry_data["connection_listeners"].append(self._on_connection_change)
+            self.async_on_remove(
+                subscribe_listener(entry_data["connection_listeners"], self._on_connection_change)
+            )
 
     @callback
     def _on_connection_change(self) -> None:
@@ -195,9 +197,13 @@ class QuartzProfileMismatchSensor(BinarySensorEntity):
         detected destination count via .A/.UV replies)."""
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         if "mismatch_listeners" in entry_data:
-            entry_data["mismatch_listeners"].append(self._on_mismatch)
+            self.async_on_remove(
+                subscribe_listener(entry_data["mismatch_listeners"], self._on_mismatch)
+            )
         if "route_listeners" in entry_data:
-            entry_data["route_listeners"].append(self._on_route)
+            self.async_on_remove(
+                subscribe_listener(entry_data["route_listeners"], self._on_route)
+            )
 
     @callback
     def _on_mismatch(self) -> None:

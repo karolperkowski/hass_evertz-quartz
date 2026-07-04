@@ -159,6 +159,63 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    # ── Reconfigure: change host/port/name without losing options/CSV ─────
+
+    async def async_step_reconfigure(self, user_input: dict | None = None) -> ConfigFlowResult:
+        """Reconfigure the connection (Settings → Integration → Reconfigure).
+
+        Only host/port/name change here — profile data, CSV names, options,
+        and entities are preserved. The entry reloads after saving.
+        """
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            host = user_input[CONF_HOST].strip()
+            port = user_input[CONF_PORT]
+            name = user_input.get(CONF_NAME, "").strip()
+
+            unique_id = f"{host}:{port}"
+            for other in self._async_current_entries():
+                if other.entry_id == entry.entry_id:
+                    continue
+                if other.unique_id == unique_id or (
+                    other.data.get(CONF_HOST) == host
+                    and other.data.get(CONF_PORT) == port
+                ):
+                    return self.async_abort(reason="already_configured")
+
+            try:
+                await _validate_connection(host, port)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            else:
+                await self.async_set_unique_id(unique_id)
+                return self.async_update_reload_and_abort(
+                    entry,
+                    unique_id=unique_id,
+                    title=name or entry.title,
+                    data_updates={
+                        CONF_HOST: host,
+                        CONF_PORT: port,
+                        CONF_NAME: name or entry.data.get(CONF_NAME) or host,
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema({
+                vol.Required(CONF_HOST, default=entry.data.get(CONF_HOST, "")): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.TEXT)
+                ),
+                vol.Required(CONF_PORT, default=entry.data.get(CONF_PORT, DEFAULT_PORT)): int,
+                vol.Optional(CONF_NAME, default=entry.data.get(CONF_NAME, "")): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.TEXT)
+                ),
+            }),
+            errors=errors,
+        )
+
     # ── Step 2: profile / CSV ─────────────────────────────────────────────
 
     async def async_step_profile(self, user_input: dict | None = None) -> ConfigFlowResult:

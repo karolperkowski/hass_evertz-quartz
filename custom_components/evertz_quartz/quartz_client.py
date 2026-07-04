@@ -38,6 +38,14 @@ _LOGGER = logging.getLogger(__name__)
 # a 1164-source profile produces a thousand-message error storm on connect.
 MNEMONIC_ABORT_AFTER = 5
 
+# An .E arriving within this many seconds of an .SV is treated as the router
+# rejecting that take — the optimistic route update is rolled back.
+SV_ERROR_WINDOW = 5.0
+
+# Reconnect backoff cap. The configured reconnect_delay is the floor; repeated
+# failures double the delay up to this ceiling, reset on a successful connect.
+MAX_RECONNECT_DELAY = 120
+
 # .UV[levels][dest_order],[src_order]  e.g. .UV1,360  or  .UVV001,360
 RE_ROUTE_UPDATE = re.compile(r"^\.UV([A-Za-z]*)(\d+),(\d+)$")
 # .A[levels][dest_order],[src_order]  — .I interrogate response
@@ -173,6 +181,14 @@ class QuartzClient:
         # and the current consecutive-.E streak (drives the sweep abort).
         self._mnemonic_pending = 0
         self._mnemonic_consec_e = 0
+        # .I interrogations awaiting .A/.E — sweep/button queries only, NOT
+        # keepalive probes (a controller that ignores .I would otherwise grow
+        # this without bound and swallow every future .E).
+        self._interrogate_pending = 0
+        # Last optimistic take awaiting confirmation: (monotonic_ts, dest, prev_src)
+        self._pending_sv: tuple[float, int, int | None] | None = None
+        # Exponential reconnect backoff state (0 = next delay is the floor)
+        self._current_backoff = 0
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -193,6 +209,7 @@ class QuartzClient:
     ) -> None:
         if reconnect_delay is not None:
             self.reconnect_delay = reconnect_delay
+            self._current_backoff = 0  # apply the new floor immediately
         if connect_timeout is not None:
             self.connect_timeout = connect_timeout
 
@@ -222,8 +239,10 @@ class QuartzClient:
             self.stats.sv_sent += 1
             self.stats.last_sv_time = time.time()
 
-            # Optimistic update — reflect change immediately in HA
+            # Optimistic update — reflect change immediately in HA.
+            # Remember the previous source so an .E reply can roll it back.
             prev = self.routes.get(destination)
+            self._pending_sv = (time.monotonic(), destination, prev)
             self.routes[destination] = source
             if prev != source:
                 self._log.debug(
@@ -317,6 +336,8 @@ class QuartzClient:
                 cmd_stripped = cmd.strip()
                 self._log.debug("%sTX → %s", self._pfx, cmd_stripped)
                 self.stats.record_trace("TX", cmd_stripped)
+                # Pending before write — the reader may reply during drain()
+                self._interrogate_pending += 1
                 self._writer.write(cmd.encode())
                 await self._writer.drain()
                 self.stats.messages_sent += 1
@@ -469,7 +490,7 @@ class QuartzClient:
                 break
             except Exception as err:  # noqa: BLE001
                 msg = f"Connection error: {err}"
-                self._log.error("%s%s — reconnecting in %ds", self._pfx, msg, self.reconnect_delay)
+                self._log.error("%s%s — will reconnect", self._pfx, msg)
                 self.stats.record_error(msg)
             finally:
                 if reader_task is not None:
@@ -479,7 +500,19 @@ class QuartzClient:
                 await self._disconnect()
 
             if self._running:
-                await asyncio.sleep(self.reconnect_delay)
+                delay = self._next_reconnect_delay()
+                self._log.debug("%sReconnecting in %ds", self._pfx, delay)
+                await asyncio.sleep(delay)
+
+    def _next_reconnect_delay(self) -> int:
+        """Exponential backoff: floor at the configured reconnect_delay,
+        double per consecutive failed cycle, capped at MAX_RECONNECT_DELAY.
+        Reset by a successful connect."""
+        if self._current_backoff:
+            self._current_backoff = min(self._current_backoff * 2, MAX_RECONNECT_DELAY)
+        else:
+            self._current_backoff = max(1, self.reconnect_delay)
+        return self._current_backoff
 
     async def _connect(self) -> None:
         self._log.debug("%sConnecting to %s:%d (timeout %ds)", self._pfx, self.host, self.port, self.connect_timeout)
@@ -490,6 +523,12 @@ class QuartzClient:
         self._connected = True
         self.stats.connect_time = time.time()
         self.stats.reconnect_count += 1
+        # Fresh connection: reset backoff and stale reply accounting
+        self._current_backoff = 0
+        self._interrogate_pending = 0
+        self._mnemonic_pending = 0
+        self._mnemonic_consec_e = 0
+        self._pending_sv = None
         self._log.info(
             "%sConnected to Evertz Quartz router at %s:%d (connection #%d)",
             self._pfx, self.host, self.port, self.stats.reconnect_count,
@@ -582,6 +621,9 @@ class QuartzClient:
             src_order   = int(m.group(3))
             prev        = self.routes.get(dest_order)
             self.routes[dest_order] = src_order
+            # A .UV for the optimistically-routed destination confirms the take
+            if self._pending_sv and self._pending_sv[1] == dest_order:
+                self._pending_sv = None
             self.stats.route_updates += 1
             dest_name = self.destination_names.get(dest_order, f"Dest {dest_order}")
             src_name  = self.source_names.get(src_order,  f"Src {src_order}")
@@ -611,6 +653,7 @@ class QuartzClient:
             prev = self.routes.get(dest_order)
             self.routes[dest_order] = src_order
             self.stats.interrogate_replied += 1
+            self._interrogate_pending = max(0, self._interrogate_pending - 1)
             dest_name = self.destination_names.get(dest_order, f"Dest {dest_order}")
             src_name  = self.source_names.get(src_order, f"Src {src_order}")
             if prev != src_order:
@@ -711,16 +754,34 @@ class QuartzClient:
     def _handle_error_reply(self) -> None:
         """Attribute an incoming .E to the most likely outstanding command.
 
-        .E carries no context, so attribution is best-effort in command order:
-        outstanding .I interrogations first (an .E per nonexistent destination
-        is *expected* on over-provisioned profiles — it drives detection), then
-        outstanding mnemonic queries (MAGNUM rejects .RD/.RT). Both are counted
-        in dedicated stats instead of recent_errors so real errors stay visible.
+        .E carries no context, so attribution is best-effort: a take awaiting
+        confirmation first (the router rejected it — roll back the optimistic
+        route update), then outstanding .I interrogations (an .E per
+        nonexistent destination is *expected* on over-provisioned profiles —
+        it drives detection), then outstanding mnemonic queries (MAGNUM
+        rejects .RD/.RT). Sweep rejections are counted in dedicated stats
+        instead of recent_errors so real errors stay visible.
         """
-        outstanding_i = self.stats.interrogate_sent - (
-            self.stats.interrogate_replied + self.stats.interrogate_rejected
-        )
-        if outstanding_i > 0:
+        if self._pending_sv is not None:
+            ts, dest, prev = self._pending_sv
+            self._pending_sv = None
+            if time.monotonic() - ts <= SV_ERROR_WINDOW:
+                if prev is None:
+                    self.routes.pop(dest, None)
+                else:
+                    self.routes[dest] = prev
+                dest_name = self.destination_names.get(dest, f"Dest {dest}")
+                msg = (
+                    f"Router rejected take on {dest_name} (Order {dest}) — "
+                    f"rolled back to previous source ({prev})"
+                )
+                self._log.warning("%s%s", self._pfx, msg)
+                self.stats.record_error(msg)
+                if self._route_callback:
+                    self._route_callback(dest, prev if prev is not None else 0, self.levels)
+                return
+        if self._interrogate_pending > 0:
+            self._interrogate_pending -= 1
             self.stats.interrogate_rejected += 1
             self._log.debug(
                 "%s.E attributed to .I interrogate (destination does not exist)", self._pfx

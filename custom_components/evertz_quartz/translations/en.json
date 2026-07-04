@@ -14,6 +14,19 @@
           "router_name": "Friendly name shown in the UI (e.g. 'Studio A Router'). Defaults to the IP address if left blank."
         }
       },
+      "reconfigure": {
+        "title": "Reconfigure Connection",
+        "description": "Change the router's connection details. Profile data, CSV names, and options are preserved — the integration reloads after saving.",
+        "data": {
+          "host": "IP Address",
+          "port": "TCP Port",
+          "router_name": "Router Name (optional)"
+        },
+        "data_description": {
+          "port": "Common ports: 3737 (EMR/EQX), 23 (legacy Telnet)",
+          "router_name": "Friendly name shown in the UI. Leave blank to keep the current name."
+        }
+      },
       "profile": {
         "title": "Router Profile — {router_name}",
         "description": "Set the number of sources and destinations. Upload your MAGNUM profile_availability CSV to populate these automatically.\n\n{csv_warnings}",
@@ -37,7 +50,8 @@
       "unknown": "An unexpected error occurred."
     },
     "abort": {
-      "already_configured": "This router is already configured."
+      "already_configured": "This router is already configured.",
+      "reconfigure_successful": "Connection settings updated — the integration is reloading."
     }
   },
   "options": {

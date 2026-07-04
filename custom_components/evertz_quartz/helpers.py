@@ -2,7 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from homeassistant.config_entries import ConfigEntry
+
+
+def subscribe_listener(listeners: list, callback: Callable) -> Callable[[], None]:
+    """Append a callback to a hass.data listener list and return an unsubscribe.
+
+    Entities pass the returned callable to ``self.async_on_remove`` so the
+    listener is dropped when the entity is removed (platform reloads would
+    otherwise leave dead callbacks behind). Safe if the list was already
+    rebuilt by a full entry reload.
+    """
+    listeners.append(callback)
+
+    def _unsubscribe() -> None:
+        if callback in listeners:
+            listeners.remove(callback)
+
+    return _unsubscribe
 
 
 def effective(entry: ConfigEntry, key: str, default):

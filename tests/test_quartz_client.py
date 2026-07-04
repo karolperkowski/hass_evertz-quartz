@@ -172,7 +172,7 @@ def test_mnemonic_reply_resets_consecutive_e_streak() -> None:
 
 def test_e_attributed_to_interrogate_first() -> None:
     client = make_client()
-    client.stats.interrogate_sent = 3
+    client._interrogate_pending = 3
     client._dispatch(".E")
     assert client.stats.interrogate_rejected == 1
     assert client.stats.mnemonic_rejected == 0
@@ -194,6 +194,80 @@ def test_unattributed_e_is_a_real_error() -> None:
     client = make_client()
     client._dispatch(".E")
     assert client.stats.errors != []
+
+
+# ── Optimistic rollback on .E ──────────────────────────────────────────────
+
+
+async def test_e_rolls_back_optimistic_route() -> None:
+    calls: list = []
+    client = make_client(route_callback=lambda *a: calls.append(a))
+    client._writer = FakeWriter()
+    client._connected = True
+    client.routes[1] = 10
+
+    await client.route(1, 360)
+    assert client.routes[1] == 360
+
+    client._dispatch(".E")
+    assert client.routes[1] == 10
+    # Optimistic update then rollback both fired the callback
+    assert calls == [(1, 360, "V"), (1, 10, "V")]
+    assert any("rolled back" in e for e in client.stats.errors)
+
+
+async def test_e_rollback_removes_route_when_no_previous_source() -> None:
+    client = make_client()
+    client._writer = FakeWriter()
+    client._connected = True
+
+    await client.route(1, 360)
+    client._dispatch(".E")
+    assert 1 not in client.routes
+
+
+async def test_uv_confirmation_disarms_rollback() -> None:
+    client = make_client()
+    client._writer = FakeWriter()
+    client._connected = True
+    client.routes[1] = 10
+
+    await client.route(1, 360)
+    client._dispatch(".UV1,360")   # router confirms the take
+    client._dispatch(".E")         # later .E must not roll back
+    assert client.routes[1] == 360
+
+
+async def test_stale_pending_sv_is_not_rolled_back(monkeypatch) -> None:
+    client = make_client()
+    client._writer = FakeWriter()
+    client._connected = True
+    await client.route(1, 360)
+    # Age the pending take beyond the correlation window
+    ts, dest, prev = client._pending_sv
+    client._pending_sv = (ts - 60, dest, prev)
+    client._dispatch(".E")
+    assert client.routes[1] == 360  # kept — the .E is unrelated
+
+
+# ── Reconnect backoff ──────────────────────────────────────────────────────
+
+
+def test_backoff_doubles_and_caps() -> None:
+    from custom_components.evertz_quartz.quartz_client import MAX_RECONNECT_DELAY
+
+    client = make_client(reconnect_delay=5)
+    delays = [client._next_reconnect_delay() for _ in range(7)]
+    assert delays == [5, 10, 20, 40, 80, 120, 120]
+    assert delays[-1] == MAX_RECONNECT_DELAY
+
+
+def test_backoff_resets_on_option_update() -> None:
+    client = make_client(reconnect_delay=5)
+    client._next_reconnect_delay()
+    client._next_reconnect_delay()
+    client.update_options(reconnect_delay=7)
+    assert client._next_reconnect_delay() == 7
 
 
 # ── Mnemonic sweep abort ───────────────────────────────────────────────────

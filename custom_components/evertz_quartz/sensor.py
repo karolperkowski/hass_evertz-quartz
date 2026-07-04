@@ -15,7 +15,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_CSV_LOADED, CONF_MAX_DESTINATIONS, CONF_MAX_SOURCES, DOMAIN
-from .helpers import readonly_destinations
+from .helpers import readonly_destinations, subscribe_listener
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -104,9 +104,13 @@ class QuartzDestinationSourceSensor(SensorEntity):
     async def async_added_to_hass(self) -> None:
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         if "route_listeners" in entry_data:
-            entry_data["route_listeners"].append(self._on_route_update)
+            self.async_on_remove(
+                subscribe_listener(entry_data["route_listeners"], self._on_route_update)
+            )
         if "mnemonic_listeners" in entry_data:
-            entry_data["mnemonic_listeners"].append(self._on_mnemonic_update)
+            self.async_on_remove(
+                subscribe_listener(entry_data["mnemonic_listeners"], self._on_mnemonic_update)
+            )
 
     @callback
     def _on_route_update(self, dest_order: int, src_order: int, levels: str) -> None:
@@ -182,7 +186,9 @@ class QuartzLastConnectedSensor(SensorEntity):
     async def async_added_to_hass(self) -> None:
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         if "connection_listeners" in entry_data:
-            entry_data["connection_listeners"].append(self._on_connection_change)
+            self.async_on_remove(
+                subscribe_listener(entry_data["connection_listeners"], self._on_connection_change)
+            )
 
     @callback
     def _on_connection_change(self) -> None:

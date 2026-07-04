@@ -65,6 +65,74 @@ async def test_duplicate_router_aborts(hass) -> None:
     assert result["reason"] == "already_configured"
 
 
+async def test_reconfigure_updates_host_and_reloads(hass) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="old.local:6666",
+        title="MY-ROUTER",
+        data={
+            "host": "old.local",
+            "port": 6666,
+            "router_name": "MY-ROUTER",
+            "max_sources": 32,
+            "csv_loaded": True,
+            "source_names": {"1": "SRC-001"},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+
+    with patch(
+        "custom_components.evertz_quartz.config_flow._validate_connection",
+        return_value=None,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"host": "new.local", "port": 7777, "router_name": ""},
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data["host"] == "new.local"
+    assert entry.data["port"] == 7777
+    assert entry.unique_id == "new.local:7777"
+    # Profile/CSV data preserved
+    assert entry.data["csv_loaded"] is True
+    assert entry.data["source_names"] == {"1": "SRC-001"}
+    # Name kept when left blank
+    assert entry.data["router_name"] == "MY-ROUTER"
+
+
+async def test_reconfigure_aborts_on_collision_with_other_entry(hass) -> None:
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="other.local:6666",
+        data={"host": "other.local", "port": 6666},
+    ).add_to_hass(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="mine.local:6666",
+        data={"host": "mine.local", "port": 6666},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"host": "other.local", "port": 6666, "router_name": ""},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
 async def test_cannot_connect_shows_error(hass) -> None:
     from custom_components.evertz_quartz.config_flow import CannotConnect
 

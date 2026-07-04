@@ -16,6 +16,7 @@ from .helpers import (
     effective,
     notify_blocked_route,
     router_display_name,
+    subscribe_listener,
     user_can_route,
 )
 
@@ -180,7 +181,9 @@ class QuartzDestinationLock(LockEntity):
         """Register for lock state updates."""
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         if "lock_listeners" in entry_data:
-            entry_data["lock_listeners"].append(self._on_lock_update)
+            self.async_on_remove(
+                subscribe_listener(entry_data["lock_listeners"], self._on_lock_update)
+            )
 
     @callback
     def _on_lock_update(self, dest_order: int, lock_value: int) -> None:

@@ -25,6 +25,7 @@ from .helpers import (
     notify_blocked_route,
     readonly_destinations,
     router_display_name,
+    subscribe_listener,
     user_can_route,
 )
 
@@ -271,8 +272,12 @@ class QuartzDestinationSelect(SelectEntity):
 
     async def async_added_to_hass(self) -> None:
         entry_data = self.hass.data[DOMAIN][self._entry.entry_id]
-        entry_data["route_listeners"].append(self._on_route_update)
-        entry_data["mnemonic_listeners"].append(self._on_mnemonic_update)
+        self.async_on_remove(
+            subscribe_listener(entry_data["route_listeners"], self._on_route_update)
+        )
+        self.async_on_remove(
+            subscribe_listener(entry_data["mnemonic_listeners"], self._on_mnemonic_update)
+        )
 
     @callback
     def _on_route_update(self, dest_order: int, src_order: int, levels: str) -> None:
