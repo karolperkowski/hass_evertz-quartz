@@ -88,14 +88,25 @@ async def test_reconfigure_updates_host_and_reloads(hass) -> None:
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reconfigure"
 
-    with patch(
-        "custom_components.evertz_quartz.config_flow._validate_connection",
-        return_value=None,
+    with (
+        patch(
+            "custom_components.evertz_quartz.config_flow._validate_connection",
+            return_value=None,
+        ),
+        # The abort triggers an entry reload — keep the real setup (TCP
+        # connect, notifications) out of the test.
+        patch(
+            "custom_components.evertz_quartz.async_setup_entry", return_value=True
+        ),
+        patch(
+            "custom_components.evertz_quartz.async_unload_entry", return_value=True
+        ),
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {"host": "new.local", "port": 7777, "router_name": ""},
         )
+        await hass.async_block_till_done()
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert entry.data["host"] == "new.local"

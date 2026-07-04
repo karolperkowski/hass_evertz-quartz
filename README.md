@@ -180,9 +180,20 @@ data:
 
 | Entity | Type | Description |
 |---|---|---|
-| `select.{name}_{destination}` | Select | Route any source to this destination. Options list shows CSV names (or generic names if no CSV loaded). |
+| `select.{name}_{destination}` | Select | Route any source to this destination. Options show CSV names (or generic names without a CSV). Hidden profile rows are excluded; duplicate names get an ` (Order N)` suffix so every option is unambiguous. |
+| `lock.{name}_{destination}_lock` | Lock | Lock/unlock the destination (`.BL` / `.BU`). Locked destinations reject takes from HA. Attributes show the lock type — `software` (clearable from HA) or `panel:N` (hardware Q-link panel lock, must be released at the panel). |
+| `sensor.{name}_{destination}_source` | Sensor | Read-only view of the destination's current source. Created only for destinations marked **read-only** in the Configure panel. |
 
-### Diagnostic (per router)
+### Status (per router)
+
+| Entity | Type | Description |
+|---|---|---|
+| `binary_sensor.{name}_connected` | Binary sensor | Live TCP connection status. |
+| `binary_sensor.{name}_profile_mismatch` | Binary sensor | ON when the router uses Order numbers beyond the configured size, or when fewer destinations answered interrogation than configured (over-provisioned profile). Attributes include detected/suggested counts and a resolution hint. |
+| `sensor.{name}_last_connected` | Sensor | Timestamp of the last successful connection (diagnostic). |
+| `sensor.{name}_profile` | Sensor | Profile summary — configured size, CSV status, name counts (diagnostic). |
+
+### Diagnostic controls (per router)
 
 These appear under the device in **Settings → Devices & Services** and are also available in automations and dashboards.
 
@@ -193,6 +204,8 @@ These appear under the device in **Settings → Devices & Services** and are als
 | `button.{name}_resync_all` | Button | Re-polls both names and routes from the router. |
 | `button.{name}_resync_routes` | Button | Re-polls current route state only. |
 | `button.{name}_resync_names` | Button | Re-polls source and destination names (no effect on MAGNUM — use CSV instead). |
+| `button.{name}_detect_destinations` | Button | Re-interrogates the controller to count real destinations, then reports the result in a notification. Useful when the profile is over-provisioned. |
+| `button.{name}_clean_up_stale_entities` | Button | Removes orphaned destination entities left in the registry after the matrix was shrunk. |
 | `button.{name}_clear_csv` | Button | Removes the loaded CSV profile and reverts to generic names. |
 
 ### When to use each resync button
@@ -200,6 +213,81 @@ These appear under the device in **Settings → Devices & Services** and are als
 - **Resync All** — after a router config change (new sources, destinations, renamed ports)
 - **Resync Routes** — if HA state looks out of sync after a reconnect
 - **Resync Names** — if labels changed on a non-MAGNUM router
+
+---
+
+## Read-Only Destinations & Permissions
+
+Destinations selected under **Configure → Read-only destinations** get a
+read-only source sensor, and **takes to them are blocked** — in the select
+entity and the `evertz_quartz.route` service — unless the calling HA user is
+in the **allowed users** list. The same rule applies to locking/unlocking the
+destination. Calls with no user context (automations, scripts) are always
+blocked on read-only destinations.
+
+The select entity stays visible to everyone and exposes `read_only` and
+`readonly_allowed_users` attributes so the Lovelace card can render it as
+display-only for non-allowed users; enforcement always happens server-side.
+
+> The read-only list is keyed by Order — re-check it after a CSV re-import if
+> the profile order changed.
+
+---
+
+## Events
+
+### `evertz_quartz_route_blocked`
+
+Fired on the HA event bus whenever an operation is blocked, from every
+enforcement path. A persistent notification is raised at the same time.
+
+| Field | Values / meaning |
+|---|---|
+| `router` | Router display name |
+| `entry_id` | Config entry ID |
+| `reason` | `read_only` \| `locked` \| `cross_namespace` |
+| `origin` | `select` (dropdown), `service` (`evertz_quartz.route`), `lock` (lock entity) |
+| `action` | `route` \| `lock` \| `unlock` |
+| `destination` / `destination_name` | Destination Order + name |
+| `source` / `source_name` | Source Order + name (null for lock/unlock) |
+| `user_id` | HA user that attempted the action (null for automations/scripts) |
+
+Example — push a notification when someone hits a blocked destination:
+
+```yaml
+automation:
+  - alias: "Notify on blocked route"
+    trigger:
+      - platform: event
+        event_type: evertz_quartz_route_blocked
+    action:
+      - service: notify.mobile_app_my_phone
+        data:
+          title: "Route blocked on {{ trigger.event.data.router }}"
+          message: >
+            {{ trigger.event.data.action }} to
+            {{ trigger.event.data.destination_name }} blocked
+            ({{ trigger.event.data.reason }})
+```
+
+---
+
+## Connection Behaviour
+
+- **Startup sync notification** — on the first connect after a restart or
+  reload, a persistent notification explains that routes/locks/names are still
+  synchronizing (with a time estimate) and clears itself when the sync
+  finishes. Destination entities may show *Unknown* until then.
+- **Batched sync sweeps** — route, lock, and name interrogations are sent in
+  batches, so even large matrices sync in seconds.
+- **Reconnect backoff** — after repeated connection failures the reconnect
+  delay doubles (starting from the configured value, capped at 120 s) and
+  resets on success.
+- **Rejected takes roll back** — if the router answers a take with `.E`, the
+  optimistic dropdown state snaps back to the previous source.
+- **Reconfigure** — change the router's IP/port/name via
+  **Settings → Devices & Services → ⋮ → Reconfigure** without losing the
+  profile, CSV names, or options.
 
 ---
 
@@ -237,13 +325,16 @@ The easiest way is via the **Log Level** and **Client Log Level** select entitie
 The JSON file includes:
 
 - Connection state (connected/disconnected, reconnect count, timestamps)
-- All current routes (destination → source Order numbers)
+- All current routes and lock states (destination → source Order numbers)
 - All loaded source and destination names
-- Message counters: `.SV` sent, `.UV` received, `.I` interrogate sent and replied
+- Message counters: `.SV` sent, `.UV` received, `.I` interrogate
+  sent/replied/rejected, mnemonic queries rejected
 - Protocol trace — last 100 TX/RX lines with millisecond timestamps
 - Last 20 errors
 
-Paste the `stats` and `protocol_trace` sections when reporting an issue.
+The router's IP address is redacted automatically, so the file is safe to
+attach to a GitHub issue. Paste the `stats` and `protocol_trace` sections when
+reporting a problem.
 
 ### Configure panel
 
@@ -251,11 +342,13 @@ Paste the `stats` and `protocol_trace` sections when reporting an issue.
 
 | Option | Default | Description |
 |---|---|---|
+| **Levels** | `V` | Routing levels |
+| **Reconnect delay** | 5s | Wait time before reconnecting after a drop (backoff floor) |
+| **Connection timeout** | 10s | Max time to establish the TCP connection |
+| **Read-only destinations** | — | Destinations that get a read-only sensor and blocked takes |
+| **Allowed users** | — | HA users still permitted to control read-only destinations |
 | **Max Sources** | 32 | Number of sources (set automatically from CSV) |
 | **Max Destinations** | 32 | Number of destinations (set automatically from CSV) |
-| **Levels** | `V` | Routing levels |
-| **Reconnect delay** | 5s | Wait time before reconnecting after a drop |
-| **Connection timeout** | 10s | Max time to establish the TCP connection |
 | **Profile CSV** | — | Re-import an updated MAGNUM profile |
 
 ---
@@ -272,6 +365,9 @@ The **Quartz Remote Control Protocol** (Evertz Application Note 65) is an open A
 | `.A[lvl][dst],[src]\r` | ← Router | Route interrogate reply |
 | `.RD[dst]\r` | → Router | Read destination name |
 | `.RT[src]\r` | → Router | Read source name |
+| `.BL[dst]\r` / `.BU[dst]\r` | → Router | Lock / unlock destination |
+| `.BI[dst]\r` | → Router | Interrogate lock state |
+| `.BA[dst],[value]\r` | ← Router | Lock state (0 = unlocked, 255 = software lock, 1–254 = panel lock) |
 | `.A\r` | ← Router | Generic acknowledge |
 | `.E\r` | ← Router | Error |
 
@@ -279,8 +375,10 @@ The **Quartz Remote Control Protocol** (Evertz Application Note 65) is an open A
 
 - Routes by `Order` number (sequential profile index), not Quartz Port Number
 - Does not respond to `.RT` / `.RD` name queries — use the CSV instead
+  (the integration aborts name sweeps automatically after a burst of `.E`)
 - Sends `.UV` for all routes made from MAGNUM or other controllers
-- Holds TCP connections open without keepalives
+- Holds TCP connections open; after 60 s of silence the integration sends a
+  `.I` keepalive probe to detect dead connections
 
 ---
 
