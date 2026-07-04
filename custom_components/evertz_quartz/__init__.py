@@ -276,6 +276,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "[%s] No namespace data in CSV — namespace filtering disabled. "
                 "Re-import CSV to enable cross-namespace route blocking.", rname
             )
+        # Hidden rows stay in the name/port maps (MAGNUM still uses their
+        # Orders) but are excluded from the source dropdown options.
+        client.hidden_sources = {int(o) for o in entry.data.get("hidden_source_orders", [])}
+        client.hidden_destinations = {int(o) for o in entry.data.get("hidden_destination_orders", [])}
+        if client.hidden_sources or client.hidden_destinations:
+            _LOGGER.debug(
+                "[%s] Hidden profile rows: %d source(s), %d destination(s)",
+                rname, len(client.hidden_sources), len(client.hidden_destinations),
+            )
 
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,

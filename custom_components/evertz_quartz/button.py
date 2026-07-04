@@ -278,12 +278,20 @@ class QuartzClearCsvButton(ButtonEntity):
         new_data.pop("destination_names", None)
         new_data.pop("source_port_map", None)
         new_data.pop("destination_port_map", None)
+        new_data.pop("source_namespaces", None)
+        new_data.pop("destination_namespaces", None)
+        new_data.pop("hidden_source_orders", None)
+        new_data.pop("hidden_destination_orders", None)
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
 
         # Clear client state
         self._client.csv_loaded = False
         self._client.source_names.clear()
         self._client.destination_names.clear()
+        self._client.source_namespaces.clear()
+        self._client.destination_namespaces.clear()
+        self._client.hidden_sources.clear()
+        self._client.hidden_destinations.clear()
         # Restore identity port maps
         max_src = self._client.max_sources
         max_dst = self._client.max_destinations

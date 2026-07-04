@@ -52,6 +52,11 @@ class ParseResult:
     format_detected: str = ""
     hidden_sources: int = 0
     hidden_destinations: int = 0
+    # Orders of rows marked Hidden? in the profile. Hidden rows stay in the
+    # name/port maps (MAGNUM still uses their Orders in .UV/.SV traffic) but
+    # are excluded from the source dropdown options.
+    hidden_source_orders: list[int] = field(default_factory=list)
+    hidden_destination_orders: list[int] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -141,7 +146,8 @@ def _parse_magnum_profile(text: str) -> ParseResult | None:
     dst_port_map: dict[int, int] = {}       # order → port
     src_ns: dict[int, str] = {}             # order → Device Short Name
     dst_ns: dict[int, str] = {}             # order → Device Short Name
-    hidden_src = hidden_dst = 0
+    hidden_src_orders: list[int] = []
+    hidden_dst_orders: list[int] = []
     warnings: list[str] = []
 
     for row_num, row in enumerate(rows[1:], start=2):
@@ -162,14 +168,14 @@ def _parse_magnum_profile(text: str) -> ParseResult | None:
 
         if kind == "SRC":
             if hidden:
-                hidden_src += 1
+                hidden_src_orders.append(order)
             src_names[order] = name or f"Source {order}"
             src_port_map[order] = port
             if namespace:
                 src_ns[order] = namespace
         elif kind in ("DST", "DEST", "DESTINATION"):
             if hidden:
-                hidden_dst += 1
+                hidden_dst_orders.append(order)
             dst_names[order] = name or f"Destination {order}"
             dst_port_map[order] = port
             if namespace:
@@ -206,8 +212,10 @@ def _parse_magnum_profile(text: str) -> ParseResult | None:
         source_namespaces=src_ns,
         destination_namespaces=dst_ns,
         format_detected="MAGNUM profile_availability",
-        hidden_sources=hidden_src,
-        hidden_destinations=hidden_dst,
+        hidden_sources=len(hidden_src_orders),
+        hidden_destinations=len(hidden_dst_orders),
+        hidden_source_orders=hidden_src_orders,
+        hidden_destination_orders=hidden_dst_orders,
         warnings=warnings,
     )
 

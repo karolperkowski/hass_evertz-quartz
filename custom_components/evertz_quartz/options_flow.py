@@ -127,7 +127,8 @@ def _build_csv_diff(entry: ConfigEntry, result: ParseResult) -> dict:
     if result.hidden_sources or result.hidden_destinations:
         changes.append(
             f"Hidden ports: {result.hidden_sources} src, "
-            f"{result.hidden_destinations} dst (excluded from profile)"
+            f"{result.hidden_destinations} dst (kept in the profile; hidden "
+            "sources are excluded from source dropdowns)"
         )
 
     warnings = list(result.warnings)
@@ -352,6 +353,8 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                         destination_port_map=result.destination_port_map if result.max_destinations > 0 else None,
                         source_namespaces=result.source_namespaces if result.source_namespaces else None,
                         destination_namespaces=result.destination_namespaces if result.destination_namespaces else None,
+                        hidden_source_orders=result.hidden_source_orders if result.max_sources > 0 else None,
+                        hidden_destination_orders=result.hidden_destination_orders if result.max_destinations > 0 else None,
                     )
                 else:
                     return await self._apply(
@@ -402,6 +405,8 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
         destination_port_map: dict[int, int] | None = None,
         source_namespaces: dict[int, str] | None = None,
         destination_namespaces: dict[int, str] | None = None,
+        hidden_source_orders: list[int] | None = None,
+        hidden_destination_orders: list[int] | None = None,
     ) -> FlowResult:
         """
         Persist all changes and optionally reload.
@@ -458,6 +463,10 @@ class EvertzQuartzOptionsFlow(OptionsFlow):
                 new_data["source_namespaces"] = {str(k): v for k, v in source_namespaces.items()}
             if destination_namespaces is not None:
                 new_data["destination_namespaces"] = {str(k): v for k, v in destination_namespaces.items()}
+            if hidden_source_orders is not None:
+                new_data["hidden_source_orders"] = list(hidden_source_orders)
+            if hidden_destination_orders is not None:
+                new_data["hidden_destination_orders"] = list(hidden_destination_orders)
             new_data[CONF_CSV_LOADED] = True
 
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)

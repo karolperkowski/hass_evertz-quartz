@@ -18,6 +18,7 @@ All dicts (routes, source_names, destination_names) are keyed by Order.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -31,6 +32,11 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Abort a mnemonic sweep (.RD or .RT) after this many consecutive .E replies —
+# MAGNUM-family controllers reject every mnemonic query, and without the guard
+# a 1164-source profile produces a thousand-message error storm on connect.
+MNEMONIC_ABORT_AFTER = 5
 
 # .UV[levels][dest_order],[src_order]  e.g. .UV1,360  or  .UVV001,360
 RE_ROUTE_UPDATE = re.compile(r"^\.UV([A-Za-z]*)(\d+),(\d+)$")
@@ -61,6 +67,8 @@ class QuartzStats:
     route_updates: int = 0                  # .UV messages received
     interrogate_sent: int = 0               # .I commands sent
     interrogate_replied: int = 0            # .A replies received
+    interrogate_rejected: int = 0           # .E replies attributed to .I (expected on over-provisioned profiles)
+    mnemonic_rejected: int = 0              # .E replies attributed to .RD/.RT (controller rejects mnemonic queries)
     sv_sent: int = 0                        # .SV commands sent
     unhandled: int = 0                      # messages not matched by any parser
     errors: list = field(default_factory=list)
@@ -131,6 +139,12 @@ class QuartzClient:
         self.src_port_map: dict[int, int] = {}     # order → quartz_port (diagnostics only)
         self.dst_port_map: dict[int, int] = {}     # order → quartz_port (diagnostics only)
 
+        # Orders marked Hidden? in the CSV profile. Kept in the name/port maps
+        # (MAGNUM still uses their Orders in .UV/.SV) but excluded from the
+        # source dropdown options.
+        self.hidden_sources: set[int] = set()
+        self.hidden_destinations: set[int] = set()
+
         self.stats = QuartzStats()
         self._route_callback = route_callback
         self._mnemonic_callback = mnemonic_callback
@@ -155,6 +169,10 @@ class QuartzClient:
         self._connected = False
         self._mnemonics_expected = 0
         self._mnemonics_received = 0
+        # .E attribution for mnemonic sweeps: queries still awaiting a reply
+        # and the current consecutive-.E streak (drives the sweep abort).
+        self._mnemonic_pending = 0
+        self._mnemonic_consec_e = 0
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -327,32 +345,44 @@ class QuartzClient:
         total = self.max_destinations + self.max_sources
         self._mnemonics_expected = total
         self._mnemonics_received = 0
+        self._mnemonic_pending = 0
         self._log.debug(
             "%sQuerying mnemonics: %d dst + %d src (Order indices)", self._pfx,
             self.max_destinations, self.max_sources,
         )
         try:
-            for order in range(1, self.max_destinations + 1):
-                cmd = f".RD{order}\r"
-                cmd_stripped = cmd.strip()
-                self._log.debug("%sTX → %s", self._pfx, cmd_stripped)
-                self.stats.record_trace("TX", cmd_stripped)
-                self._writer.write(cmd.encode())
-                await self._writer.drain()
-                self.stats.messages_sent += 1
-                await asyncio.sleep(0.02)
-            for order in range(1, self.max_sources + 1):
-                cmd = f".RT{order}\r"
-                cmd_stripped = cmd.strip()
-                self._log.debug("%sTX → %s", self._pfx, cmd_stripped)
-                self.stats.record_trace("TX", cmd_stripped)
-                self._writer.write(cmd.encode())
-                await self._writer.drain()
-                self.stats.messages_sent += 1
-                await asyncio.sleep(0.02)
+            await self._mnemonic_sweep(".RD", self.max_destinations)
+            await self._mnemonic_sweep(".RT", self.max_sources)
         except OSError as err:
             self._log.warning("%sError querying mnemonics: %s", self._pfx, err)
             self.stats.record_error(f"Mnemonic query failed: {err}")
+
+    async def _mnemonic_sweep(self, query: str, count: int) -> None:
+        """Send one mnemonic query type for Orders 1..count.
+
+        Aborts after MNEMONIC_ABORT_AFTER consecutive .E replies — MAGNUM-family
+        controllers reject mnemonic queries, and continuing would flood the
+        connection with errors. (The reader task runs concurrently, so replies
+        are processed while the sweep is still sending.)
+        """
+        self._mnemonic_consec_e = 0
+        for order in range(1, count + 1):
+            if self._mnemonic_consec_e >= MNEMONIC_ABORT_AFTER:
+                self._log.info(
+                    "%sAborting %s mnemonic sweep at Order %d — %d consecutive .E "
+                    "replies (controller rejects %s queries)",
+                    self._pfx, query, order, self._mnemonic_consec_e, query,
+                )
+                return
+            cmd = f"{query}{order}\r"
+            cmd_stripped = cmd.strip()
+            self._log.debug("%sTX → %s", self._pfx, cmd_stripped)
+            self.stats.record_trace("TX", cmd_stripped)
+            self._writer.write(cmd.encode())
+            await self._writer.drain()
+            self.stats.messages_sent += 1
+            self._mnemonic_pending += 1
+            await asyncio.sleep(0.02)
 
     def get_diagnostics(self) -> dict:
         return {
@@ -371,6 +401,8 @@ class QuartzClient:
                 "csv_loaded": self.csv_loaded,
                 "reconnect_delay": self.reconnect_delay,
                 "connect_timeout": self.connect_timeout,
+                "hidden_sources": len(self.hidden_sources),
+                "hidden_destinations": len(self.hidden_destinations),
             },
             "detection": {
                 "max_source_order_seen":      self.max_src_order_seen,
@@ -385,6 +417,8 @@ class QuartzClient:
                 "sv_sent":              self.stats.sv_sent,
                 "interrogate_sent":     self.stats.interrogate_sent,
                 "interrogate_replied":  self.stats.interrogate_replied,
+                "interrogate_rejected": self.stats.interrogate_rejected,
+                "mnemonic_rejected":    self.stats.mnemonic_rejected,
                 "unhandled_messages":   self.stats.unhandled,
                 "last_rx_time":         self.stats.last_rx_time,
                 "last_uv_time":         self.stats.last_uv_time,
@@ -414,15 +448,21 @@ class QuartzClient:
 
     async def _run_loop(self) -> None:
         while self._running:
+            reader_task: asyncio.Task | None = None
             try:
                 await self._connect()
+                # Start processing replies before the connect-time sweep so
+                # incoming .E storms can abort the mnemonic sweep early and
+                # .A/.BA replies apply as soon as they arrive.
+                reader_task = asyncio.create_task(self._listen())
                 await self.query_all_routes()
                 await self._query_all_locks()
                 if not self.csv_loaded:
                     await self.query_all_mnemonics()
                 if self._sync_callback:
                     self._sync_callback()
-                await self._listen()
+                await reader_task
+                reader_task = None
             except asyncio.CancelledError:
                 break
             except Exception as err:  # noqa: BLE001
@@ -430,6 +470,10 @@ class QuartzClient:
                 self._log.error("%s%s — reconnecting in %ds", self._pfx, msg, self.reconnect_delay)
                 self.stats.record_error(msg)
             finally:
+                if reader_task is not None:
+                    reader_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await reader_task
                 await self._disconnect()
 
             if self._running:
@@ -648,11 +692,7 @@ class QuartzClient:
 
         # .E = error response from router
         if line == ".E":
-            self._log.warning(
-                "%sRouter returned .E (error) — last command was rejected (bad level, "
-                "dest out of range, or malformed command)", self._pfx
-            )
-            self.stats.record_error("Router returned .E")
+            self._handle_error_reply()
             return
 
         # .XU / .XA / .XE = MAGNUM extension messages (locks, protects, etc.)
@@ -665,6 +705,39 @@ class QuartzClient:
         self.stats.unhandled += 1
         raw_hex = line.encode().hex()
         self._log.debug("%sUnhandled: %r (hex: %s)", self._pfx, line, raw_hex)
+
+    def _handle_error_reply(self) -> None:
+        """Attribute an incoming .E to the most likely outstanding command.
+
+        .E carries no context, so attribution is best-effort in command order:
+        outstanding .I interrogations first (an .E per nonexistent destination
+        is *expected* on over-provisioned profiles — it drives detection), then
+        outstanding mnemonic queries (MAGNUM rejects .RD/.RT). Both are counted
+        in dedicated stats instead of recent_errors so real errors stay visible.
+        """
+        outstanding_i = self.stats.interrogate_sent - (
+            self.stats.interrogate_replied + self.stats.interrogate_rejected
+        )
+        if outstanding_i > 0:
+            self.stats.interrogate_rejected += 1
+            self._log.debug(
+                "%s.E attributed to .I interrogate (destination does not exist)", self._pfx
+            )
+            return
+        if self._mnemonic_pending > 0:
+            self._mnemonic_pending -= 1
+            self._mnemonic_consec_e += 1
+            self.stats.mnemonic_rejected += 1
+            self._log.debug(
+                "%s.E attributed to mnemonic query (%d rejected so far)",
+                self._pfx, self.stats.mnemonic_rejected,
+            )
+            return
+        self._log.warning(
+            "%sRouter returned .E (error) — last command was rejected (bad level, "
+            "dest out of range, or malformed command)", self._pfx
+        )
+        self.stats.record_error("Router returned .E")
 
     def _check_order_range(self, kind: str, order: int) -> None:
         """Record the highest Order seen, and warn once if it exceeds the max."""
@@ -750,6 +823,8 @@ class QuartzClient:
 
     def _on_mnemonic_received(self) -> None:
         self._mnemonics_received += 1
+        self._mnemonic_pending = max(0, self._mnemonic_pending - 1)
+        self._mnemonic_consec_e = 0
         if self._mnemonic_callback:
             self._mnemonic_callback()
         if self._mnemonics_received >= self._mnemonics_expected > 0:
