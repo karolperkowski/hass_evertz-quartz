@@ -14,7 +14,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS, DOMAIN
-from .helpers import effective, router_display_name
+from .helpers import effective
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -151,15 +151,6 @@ def device_info(entry: ConfigEntry):
         CONF_HOST, CONF_MAX_SOURCES, CONF_MAX_DESTINATIONS,
         CONF_CSV_LOADED, DOMAIN,
     )
-    from .helpers import effective, router_display_name
-    from importlib.metadata import version as pkg_version
-
-    # Integration version from manifest
-    try:
-        from homeassistant.loader import async_get_custom_components
-        integ_version = entry.data.get("_version", "")
-    except Exception:  # noqa: BLE001
-        integ_version = ""
 
     # Read from manifest.json directly — most reliable for custom components
     try:

@@ -38,7 +38,7 @@ class ParseResult:
     # How many entities to create
     max_sources: int
     max_destinations: int
-    # Keyed by Port Number (Quartz address) — compatible with live .RT/.RD responses
+    # Keyed by Order (MAGNUM's sequential profile index)
     source_names: dict[int, str]
     destination_names: dict[int, str]
     # Keyed by Order (entity index) → Port Number (Quartz address)

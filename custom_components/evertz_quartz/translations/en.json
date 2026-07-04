@@ -174,11 +174,11 @@
         },
         "destination": {
           "name": "Destination",
-          "description": "Destination port number (1-based, matches Quartz port number)."
+          "description": "Destination Order number — the sequential profile index (Order column in the profile CSV). Not the Quartz Port Number, which is stored for diagnostics only."
         },
         "source": {
           "name": "Source",
-          "description": "Source port number (1-based, matches Quartz port number)."
+          "description": "Source Order number — the sequential profile index (Order column in the profile CSV). Not the Quartz Port Number, which is stored for diagnostics only."
         },
         "levels": {
           "name": "Levels",

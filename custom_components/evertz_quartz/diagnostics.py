@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .quartz_client import QuartzClient
+
+# Diagnostics files end up attached to public GitHub issues — never include
+# the router address in them.
+TO_REDACT = {"host", "configuration_url"}
 
 
 async def async_get_config_entry_diagnostics(
@@ -24,15 +29,15 @@ async def async_get_config_entry_diagnostics(
     data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     client: QuartzClient | None = data.get("client")
 
-    return {
-        "config_entry": {
-            "entry_id": entry.entry_id,
-            "title": entry.title,
-            "data": {
-                # Redact nothing here — no passwords/tokens in this integration
-                **entry.data,
+    return async_redact_data(
+        {
+            "config_entry": {
+                "entry_id": entry.entry_id,
+                "title": entry.title,
+                "data": dict(entry.data),
+                "options": dict(entry.options),
             },
-            "options": dict(entry.options),
+            "client": client.get_diagnostics() if client else {"error": "client not initialised"},
         },
-        "client": client.get_diagnostics() if client else {"error": "client not initialised"},
-    }
+        TO_REDACT,
+    )

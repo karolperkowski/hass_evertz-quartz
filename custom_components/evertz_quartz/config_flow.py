@@ -177,7 +177,6 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if not errors:
                         # CSV parsed — save immediately using CSV values + any
                         # other fields the user already filled in on the form
-                        csv_was_uploaded = True
                         data = {
                             CONF_HOST:                self._host,
                             CONF_PORT:                self._port,
@@ -197,7 +196,6 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 # No CSV — save with manually entered values
-                csv_was_uploaded = False
                 data = {
                     CONF_HOST:              self._host,
                     CONF_PORT:              self._port,

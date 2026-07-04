@@ -70,8 +70,9 @@ take made from the MAGNUM UI or other controllers.
 MAGNUM may or may not echo `.UV` back after an HA-initiated take
 (still under test — see TEST_PLAN.md).
 
-**No keepalive needed:** MAGNUM holds TCP connections open. Invalid
-commands cause `.E` responses or disconnection.
+**Keepalive probe:** MAGNUM holds TCP connections open, but after 60 s of
+RX silence the client sends a `.I{level}1` probe to detect dead
+connections. Invalid commands cause `.E` responses or disconnection.
 
 ---
 

@@ -290,7 +290,6 @@ class QuartzClearCsvButton(ButtonEntity):
         self._client.src_port_map = {n: n for n in range(1, max_src + 1)}
         self._client.dst_port_map = {n: n for n in range(1, max_dst + 1)}
 
-        # Update hass.data port maps too
         # Fire mnemonic callback so all entities redraw with fallback names
         for cb in self.hass.data[DOMAIN][self._entry.entry_id].get("mnemonic_listeners", []):
             self.hass.loop.call_soon_threadsafe(cb)
