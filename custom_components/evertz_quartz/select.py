@@ -169,7 +169,7 @@ class QuartzDestinationSelect(SelectEntity):
 
     @property
     def available(self) -> bool:
-        return self._client._connected  # noqa: SLF001
+        return self._client.connected
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -190,7 +190,7 @@ class QuartzDestinationSelect(SelectEntity):
             "router":            self._entry.data.get("router_name") or self._entry.data.get("host", ""),
             "host":              self._entry.data.get("host", ""),
             "port":              self._entry.data.get("port", ""),
-            "connected":         self._client._connected,  # noqa: SLF001
+            "connected":         self._client.connected,
             "destination_order": self._order,
             "destination_namespace": dest_ns,
             "source_order":      src_order,

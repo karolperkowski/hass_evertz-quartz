@@ -74,6 +74,47 @@ def test_user_can_route_readonly_with_empty_allowlist() -> None:
     assert not user_can_route(entry, 2, "user-a")
 
 
+def test_detection_status_over_provisioned() -> None:
+    from custom_components.evertz_quartz.helpers import detection_status
+
+    client = QuartzClient(
+        host="router.local", port=6666, max_sources=100, max_destinations=32, levels="V"
+    )
+    client.max_dst_order_seen = 4
+    client.max_src_order_seen = 120
+
+    status = detection_status(make_entry(), client)
+    assert status.over_provisioned
+    assert status.configured_destinations == 32
+    assert status.detected_destinations == 4
+    assert status.suggested_max_destinations == 4
+    assert status.suggested_max_sources == 120  # grow-only hint
+
+
+def test_detection_status_no_data() -> None:
+    from custom_components.evertz_quartz.helpers import detection_status
+
+    client = QuartzClient(
+        host="router.local", port=6666, max_sources=100, max_destinations=32, levels="V"
+    )
+    status = detection_status(make_entry(), client)
+    assert not status.over_provisioned  # detected 0 = could not detect
+    assert status.suggested_max_destinations == 32
+
+
+def test_subscribe_listener_unsubscribes_safely() -> None:
+    from custom_components.evertz_quartz.helpers import subscribe_listener
+
+    listeners: list = []
+    cb = lambda: None  # noqa: E731
+    unsub = subscribe_listener(listeners, cb)
+    assert listeners == [cb]
+    unsub()
+    assert listeners == []
+    unsub()  # second call after a list rebuild must not raise
+    assert listeners == []
+
+
 async def test_notify_blocked_route_fires_event_and_notification(hass) -> None:
     entry = make_entry(data={"router_name": "MY-ROUTER", "host": "router.local"})
     client = QuartzClient(

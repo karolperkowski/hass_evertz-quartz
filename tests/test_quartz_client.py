@@ -273,46 +273,101 @@ def test_backoff_resets_on_option_update() -> None:
 # ── Mnemonic sweep abort ───────────────────────────────────────────────────
 
 
+def _count_queries(writer: FakeWriter, prefix: str) -> int:
+    return sum(chunk.count(prefix) for chunk in writer.commands)
+
+
 async def test_mnemonic_sweep_aborts_after_consecutive_errors() -> None:
+    from custom_components.evertz_quartz.quartz_client import SWEEP_BATCH
+
     client = make_client(max_sources=100)
     writer = FakeWriter()
     client._writer = writer
     client._connected = True
 
     orig_drain = writer.drain
+    answered = 0
 
     async def drain_and_reject() -> None:
+        nonlocal answered
         await orig_drain()
-        # Simulate the concurrent reader dispatching an .E reply per query
-        client._dispatch(".E")
+        # Simulate the concurrent reader dispatching an .E per query written
+        total = _count_queries(writer, ".RT")
+        for _ in range(total - answered):
+            client._dispatch(".E")
+        answered = total
 
     writer.drain = drain_and_reject
     await client._mnemonic_sweep(".RT", 100)
 
-    sent = sum(1 for c in writer.commands if c.startswith(".RT"))
-    assert sent == MNEMONIC_ABORT_AFTER
-    assert client.stats.mnemonic_rejected == MNEMONIC_ABORT_AFTER
+    # Aborted after the first batch — well short of the full 100-query storm
+    assert _count_queries(writer, ".RT") == SWEEP_BATCH
+    assert client.stats.mnemonic_rejected >= MNEMONIC_ABORT_AFTER
     assert client.stats.errors == []
 
 
 async def test_mnemonic_sweep_completes_when_replies_arrive() -> None:
-    client = make_client(max_sources=8)
+    client = make_client(max_sources=20)
     writer = FakeWriter()
     client._writer = writer
     client._connected = True
 
     orig_drain = writer.drain
+    answered = 0
 
     async def drain_and_reply() -> None:
+        nonlocal answered
         await orig_drain()
-        order = len([c for c in writer.commands if c.startswith(".RT")])
-        client._dispatch(f".RAT{order},SRC-{order:03d}")
+        total = _count_queries(writer, ".RT")
+        for order in range(answered + 1, total + 1):
+            client._dispatch(f".RAT{order},SRC-{order:03d}")
+        answered = total
 
     writer.drain = drain_and_reply
-    await client._mnemonic_sweep(".RT", 8)
+    await client._mnemonic_sweep(".RT", 20)
 
-    assert sum(1 for c in writer.commands if c.startswith(".RT")) == 8
-    assert len(client.source_names) == 8
+    assert _count_queries(writer, ".RT") == 20
+    assert len(client.source_names) == 20
+
+
+async def test_query_all_routes_is_batched() -> None:
+    from custom_components.evertz_quartz.quartz_client import SWEEP_BATCH
+
+    client = make_client(max_destinations=20)
+    writer = FakeWriter()
+    client._writer = writer
+    client._connected = True
+
+    await client.query_all_routes()
+
+    assert _count_queries(writer, ".IV") == 20
+    assert client.stats.interrogate_sent == 20
+    # ceil(20 / SWEEP_BATCH) drains, not 20
+    assert len(writer.commands) == -(-20 // SWEEP_BATCH)
+
+
+async def test_wait_interrogation_drain_returns_when_answered() -> None:
+    client = make_client()
+    client._interrogate_pending = 2
+    client._dispatch(".AV1,5")
+    client._dispatch(".AV2,6")
+    await asyncio.wait_for(client.wait_interrogation_drain(), timeout=1)
+
+
+async def test_wait_interrogation_drain_gives_up_on_stall() -> None:
+    client = make_client()
+    client._interrogate_pending = 3  # controller never answers
+    await asyncio.wait_for(
+        client.wait_interrogation_drain(timeout=10, stall=0.3), timeout=2
+    )
+
+
+def test_estimated_sync_seconds_scales_with_batches() -> None:
+    small = make_client(max_destinations=32, max_sources=32, csv_loaded=True)
+    big = make_client(max_destinations=512, max_sources=1164, csv_loaded=True)
+    assert small.estimated_sync_seconds() >= 3
+    # 512 destinations: 64 batches × 50 ms × 2 sweeps + 2 s grace ≈ 8 s
+    assert big.estimated_sync_seconds() <= 12
 
 
 # ── Optimistic routing ─────────────────────────────────────────────────────

@@ -46,6 +46,12 @@ SV_ERROR_WINDOW = 5.0
 # failures double the delay up to this ceiling, reset on a successful connect.
 MAX_RECONNECT_DELAY = 120
 
+# Connect-time sweeps write this many commands per drain() with a 50 ms pause
+# between batches — large matrices sync in seconds instead of minutes while
+# still pacing the controller.
+SWEEP_BATCH = 8
+SWEEP_BATCH_PAUSE = 0.05
+
 # .UV[levels][dest_order],[src_order]  e.g. .UV1,360  or  .UVV001,360
 RE_ROUTE_UPDATE = re.compile(r"^\.UV([A-Za-z]*)(\d+),(\d+)$")
 # .A[levels][dest_order],[src_order]  — .I interrogate response
@@ -173,6 +179,9 @@ class QuartzClient:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._listen_task: asyncio.Task | None = None
+        # Background re-query tasks spawned by the .P handler — kept so
+        # stop() can cancel them and they aren't garbage-collected mid-run.
+        self._bg_tasks: set[asyncio.Task] = set()
         self._running = False
         self._connected = False
         self._mnemonics_expected = 0
@@ -192,15 +201,32 @@ class QuartzClient:
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    @property
+    def connected(self) -> bool:
+        """True while the TCP connection to the router is established."""
+        return self._connected
+
     async def start(self) -> None:
         self._running = True
         self._listen_task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
         self._running = False
+        for task in list(self._bg_tasks):
+            task.cancel()
+        self._bg_tasks.clear()
         if self._listen_task:
             self._listen_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._listen_task
+            self._listen_task = None
         await self._disconnect()
+
+    def _spawn_bg_task(self, coro) -> None:
+        """Run a background coroutine with a tracked, stop()-cancellable task."""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     def update_options(
         self,
@@ -328,23 +354,46 @@ class QuartzClient:
         if not self._connected or self._writer is None:
             return
 
-        dst_orders = list(range(1, self.max_destinations + 1))
-        self._log.debug("%sInterrogating route state for destination order(s): %s", self._pfx, dst_orders)
+        self._log.debug(
+            "%sInterrogating route state for destinations 1-%d", self._pfx, self.max_destinations
+        )
         try:
-            for order in dst_orders:
-                cmd = f".I{self.levels}{order}\r"
-                cmd_stripped = cmd.strip()
-                self._log.debug("%sTX → %s", self._pfx, cmd_stripped)
-                self.stats.record_trace("TX", cmd_stripped)
-                # Pending before write — the reader may reply during drain()
-                self._interrogate_pending += 1
-                self._writer.write(cmd.encode())
+            for start in range(1, self.max_destinations + 1, SWEEP_BATCH):
+                buf = bytearray()
+                for order in range(start, min(start + SWEEP_BATCH, self.max_destinations + 1)):
+                    cmd = f".I{self.levels}{order}\r"
+                    self._log.debug("%sTX → %s", self._pfx, cmd.strip())
+                    self.stats.record_trace("TX", cmd.strip())
+                    # Pending before write — the reader may reply during drain()
+                    self._interrogate_pending += 1
+                    self.stats.messages_sent += 1
+                    self.stats.interrogate_sent += 1
+                    buf += cmd.encode()
+                self._writer.write(bytes(buf))
                 await self._writer.drain()
-                self.stats.messages_sent += 1
-                self.stats.interrogate_sent += 1
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(SWEEP_BATCH_PAUSE)
         except OSError as err:
             self._log.warning("%sError sending .I interrogate: %s", self._pfx, err)
+
+    async def wait_interrogation_drain(self, timeout: float = 10.0, stall: float = 2.0) -> None:
+        """Wait until every outstanding .I interrogation was answered.
+
+        Returns early when no reply progress is made for ``stall`` seconds
+        (controllers that ignore .I never answer) or after ``timeout``.
+        """
+        deadline = time.monotonic() + timeout
+        last_progress = time.monotonic()
+        last_count = self.stats.interrogate_replied + self.stats.interrogate_rejected
+        while time.monotonic() < deadline:
+            if self._interrogate_pending <= 0:
+                return
+            count = self.stats.interrogate_replied + self.stats.interrogate_rejected
+            if count != last_count:
+                last_count = count
+                last_progress = time.monotonic()
+            elif time.monotonic() - last_progress >= stall:
+                return
+            await asyncio.sleep(0.1)
 
     async def query_all_mnemonics(self) -> None:
         """
@@ -387,25 +436,27 @@ class QuartzClient:
         are processed while the sweep is still sending.)
         """
         self._mnemonic_consec_e = 0
-        for order in range(1, count + 1):
+        for start in range(1, count + 1, SWEEP_BATCH):
             if self._mnemonic_consec_e >= MNEMONIC_ABORT_AFTER:
                 self._log.info(
                     "%sAborting %s mnemonic sweep at Order %d — %d consecutive .E "
                     "replies (controller rejects %s queries)",
-                    self._pfx, query, order, self._mnemonic_consec_e, query,
+                    self._pfx, query, start, self._mnemonic_consec_e, query,
                 )
                 return
-            cmd = f"{query}{order}\r"
-            cmd_stripped = cmd.strip()
-            self._log.debug("%sTX → %s", self._pfx, cmd_stripped)
-            self.stats.record_trace("TX", cmd_stripped)
-            # Count as pending before writing — the reader task may process
-            # the reply during drain()/sleep() below.
-            self._mnemonic_pending += 1
-            self._writer.write(cmd.encode())
+            buf = bytearray()
+            for order in range(start, min(start + SWEEP_BATCH, count + 1)):
+                cmd = f"{query}{order}\r"
+                self._log.debug("%sTX → %s", self._pfx, cmd.strip())
+                self.stats.record_trace("TX", cmd.strip())
+                # Count as pending before writing — the reader task may
+                # process replies during drain()/sleep() below.
+                self._mnemonic_pending += 1
+                self.stats.messages_sent += 1
+                buf += cmd.encode()
+            self._writer.write(bytes(buf))
             await self._writer.drain()
-            self.stats.messages_sent += 1
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(SWEEP_BATCH_PAUSE)
 
     def get_diagnostics(self) -> dict:
         return {
@@ -461,12 +512,15 @@ class QuartzClient:
 
     def estimated_sync_seconds(self) -> int:
         """Rough duration of the connect-time sync sweep, derived from the
-        send pacing (.I 50 ms + .BI 50 ms per destination; .RD/.RT 20 ms per
-        port when no CSV is loaded) plus a reply grace period."""
-        secs = self.max_destinations * 0.05          # .I route interrogation
-        secs += self.max_destinations * 0.05         # .BI lock interrogation
+        batched send pacing (SWEEP_BATCH commands per SWEEP_BATCH_PAUSE for
+        .I routes, .BI locks, and .RD/.RT names when no CSV is loaded) plus
+        a reply grace period."""
+        def batches(n: int) -> int:
+            return -(-n // SWEEP_BATCH)  # ceil division
+
+        secs = batches(self.max_destinations) * SWEEP_BATCH_PAUSE * 2  # .I + .BI
         if not self.csv_loaded:
-            secs += (self.max_destinations + self.max_sources) * 0.02
+            secs += batches(self.max_destinations + self.max_sources) * SWEEP_BATCH_PAUSE
         return max(3, round(secs + 2))
 
     async def _run_loop(self) -> None:
@@ -538,9 +592,22 @@ class QuartzClient:
 
     async def _query_all_locks(self) -> None:
         """Interrogate lock state for all configured destinations on connect."""
-        for order in range(1, self.max_destinations + 1):
-            await self.query_lock_state(order)
-            await asyncio.sleep(0.05)
+        if not self._connected or self._writer is None:
+            return
+        try:
+            for start in range(1, self.max_destinations + 1, SWEEP_BATCH):
+                buf = bytearray()
+                for order in range(start, min(start + SWEEP_BATCH, self.max_destinations + 1)):
+                    cmd = f".BI{order}\r"
+                    self._log.debug("%sTX → %s (lock interrogate)", self._pfx, cmd.strip())
+                    self.stats.record_trace("TX", cmd.strip())
+                    self.stats.messages_sent += 1
+                    buf += cmd.encode()
+                self._writer.write(bytes(buf))
+                await self._writer.drain()
+                await asyncio.sleep(SWEEP_BATCH_PAUSE)
+        except OSError as err:
+            self._log.warning("%sLock interrogation sweep failed: %s", self._pfx, err)
 
     async def _disconnect(self) -> None:
         was_connected = self._connected
@@ -731,8 +798,8 @@ class QuartzClient:
 
         if line == ".P":
             self._log.info("%sRouter power-on/reset — re-querying routes and lock state", self._pfx)
-            asyncio.create_task(self.query_all_routes())
-            asyncio.create_task(self._query_all_locks())
+            self._spawn_bg_task(self.query_all_routes())
+            self._spawn_bg_task(self._query_all_locks())
             return
 
         # .E = error response from router

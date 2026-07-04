@@ -91,7 +91,7 @@ class QuartzDestinationLock(LockEntity):
 
     @property
     def available(self) -> bool:
-        return self._client._connected  # noqa: SLF001
+        return self._client.connected
 
     @property
     def extra_state_attributes(self) -> dict:
