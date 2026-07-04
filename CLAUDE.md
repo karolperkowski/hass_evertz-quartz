@@ -167,14 +167,18 @@ read-only destinations as display-only for the current frontend user
 (`hass.user.id`). Enforcement always stays server-side.
 
 ### Blocked-route notifications
-Every blocked take — read-only, locked, or cross-namespace — goes through
+Every blocked operation — read-only, locked, or cross-namespace — goes through
 `helpers.notify_blocked_route()`, which fires `evertz_quartz_route_blocked`
-on the HA event bus and raises a persistent notification. Both enforcement
-paths use it: the destination select entity (`origin="select"`) and the
-`evertz_quartz.route` service (`origin="service"`, which additionally raises
-`ServiceValidationError` for the caller). Event data: `router`, `entry_id`,
-`reason` (`read_only`/`locked`/`cross_namespace`), `origin`, `destination`,
-`destination_name`, `source`, `source_name`, `user_id`.
+on the HA event bus and raises a persistent notification. Enforcement paths:
+the destination select entity (`origin="select"`), the `evertz_quartz.route`
+service (`origin="service"`), and the destination lock entity
+(`origin="lock"`) — the latter two additionally raise `ServiceValidationError`
+for the caller. Read-only enforcement covers **lock/unlock as well as takes**:
+the same `user_can_route()` allowed-users list applies to the lock entity.
+Event data: `router`, `entry_id`, `reason`
+(`read_only`/`locked`/`cross_namespace`), `origin`, `action`
+(`route`/`lock`/`unlock`), `destination`, `destination_name`, `source`,
+`source_name`, `user_id`.
 
 ---
 
