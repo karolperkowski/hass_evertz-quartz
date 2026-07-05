@@ -102,19 +102,19 @@
       "log_level": {
         "name": "Log Level",
         "state": {
-          "DEBUG": "Debug",
-          "INFO": "Info",
-          "WARNING": "Warning",
-          "ERROR": "Error"
+          "debug": "Debug",
+          "info": "Info",
+          "warning": "Warning",
+          "error": "Error"
         }
       },
       "log_level_client": {
         "name": "Client Log Level",
         "state": {
-          "DEBUG": "Debug",
-          "INFO": "Info",
-          "WARNING": "Warning",
-          "ERROR": "Error"
+          "debug": "Debug",
+          "info": "Info",
+          "warning": "Warning",
+          "error": "Error"
         }
       }
     },
