@@ -2,7 +2,69 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from homeassistant.config_entries import ConfigEntry
+
+
+@dataclass(frozen=True)
+class DetectionStatus:
+    """Configured vs detected profile size — single source of truth for the
+    over-provision check (binary sensor, startup detection, Detect button)."""
+
+    configured_sources: int
+    configured_destinations: int
+    detected_destinations: int   # highest Order that answered .I (0 = no data)
+    detected_min_sources: int    # highest source Order seen in .UV/.A traffic
+    over_provisioned: bool       # fewer destinations answered than configured
+    suggested_max_sources: int
+    suggested_max_destinations: int
+
+
+def detection_status(entry: ConfigEntry, client) -> DetectionStatus:
+    """Derive the detection status from the live client (entry as fallback)."""
+    from .const import (
+        CONF_MAX_DESTINATIONS,
+        CONF_MAX_SOURCES,
+        DEFAULT_MAX_DESTINATIONS,
+        DEFAULT_MAX_SOURCES,
+    )
+
+    if client is not None:
+        cfg_src, cfg_dst = client.max_sources, client.max_destinations
+        seen_src, seen_dst = client.max_src_order_seen, client.max_dst_order_seen
+    else:
+        cfg_src = effective(entry, CONF_MAX_SOURCES, DEFAULT_MAX_SOURCES)
+        cfg_dst = effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
+        seen_src = seen_dst = 0
+
+    return DetectionStatus(
+        configured_sources=cfg_src,
+        configured_destinations=cfg_dst,
+        detected_destinations=seen_dst,
+        detected_min_sources=seen_src,
+        over_provisioned=bool(1 <= seen_dst < cfg_dst),
+        suggested_max_sources=max(cfg_src, seen_src),
+        suggested_max_destinations=seen_dst if seen_dst >= 1 else cfg_dst,
+    )
+
+
+def subscribe_listener(listeners: list, callback: Callable) -> Callable[[], None]:
+    """Append a callback to a hass.data listener list and return an unsubscribe.
+
+    Entities pass the returned callable to ``self.async_on_remove`` so the
+    listener is dropped when the entity is removed (platform reloads would
+    otherwise leave dead callbacks behind). Safe if the list was already
+    rebuilt by a full entry reload.
+    """
+    listeners.append(callback)
+
+    def _unsubscribe() -> None:
+        if callback in listeners:
+            listeners.remove(callback)
+
+    return _unsubscribe
 
 
 def effective(entry: ConfigEntry, key: str, default):
@@ -151,19 +213,11 @@ def device_info(entry: ConfigEntry):
         CONF_HOST, CONF_MAX_SOURCES, CONF_MAX_DESTINATIONS,
         CONF_CSV_LOADED, DOMAIN,
     )
-    from .helpers import effective, router_display_name
-    from importlib.metadata import version as pkg_version
-
-    # Integration version from manifest
-    try:
-        from homeassistant.loader import async_get_custom_components
-        integ_version = entry.data.get("_version", "")
-    except Exception:  # noqa: BLE001
-        integ_version = ""
 
     # Read from manifest.json directly — most reliable for custom components
     try:
-        import json, pathlib
+        import json
+        import pathlib
         manifest_path = pathlib.Path(__file__).parent / "manifest.json"
         integ_version = json.loads(manifest_path.read_text())["version"]
     except Exception:  # noqa: BLE001

@@ -1,0 +1,18 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+addopts = "--timeout=30"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# Default correctness rules (pyflakes + core pycodestyle). Style-only rule
+# sets are intentionally left off to keep the diff-noise low.
+select = ["E4", "E7", "E9", "F", "W6"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+no_strict_optional = true

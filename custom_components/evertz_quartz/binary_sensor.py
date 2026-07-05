@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -13,8 +14,11 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS, DOMAIN
-from .helpers import effective, router_display_name
+from .const import DOMAIN
+from .helpers import detection_status, subscribe_listener
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.entity import DeviceInfo
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +71,7 @@ class QuartzConnectedSensor(BinarySensorEntity):
             .get(self._entry.entry_id, {})
             .get("client")
         )
-        return bool(client and client._connected)  # noqa: SLF001
+        return bool(client and client.connected)
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -96,7 +100,9 @@ class QuartzConnectedSensor(BinarySensorEntity):
     async def async_added_to_hass(self) -> None:
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         if "connection_listeners" in entry_data:
-            entry_data["connection_listeners"].append(self._on_connection_change)
+            self.async_on_remove(
+                subscribe_listener(entry_data["connection_listeners"], self._on_connection_change)
+            )
 
     @callback
     def _on_connection_change(self) -> None:
@@ -142,12 +148,7 @@ class QuartzProfileMismatchSensor(BinarySensorEntity):
         if entry_data.get("mismatch_orders"):
             return True
         client = entry_data.get("client")
-        if client is not None:
-            configured = effective(self._entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
-            detected = client.max_dst_order_seen
-            if 1 <= detected < configured:
-                return True
-        return False
+        return client is not None and detection_status(self._entry, client).over_provisioned
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -161,20 +162,19 @@ class QuartzProfileMismatchSensor(BinarySensorEntity):
         }
         over_provisioned = False
         if client is not None:
-            cfg_src,  cfg_dst  = client.max_sources, client.max_destinations
-            seen_src, seen_dst = client.max_src_order_seen, client.max_dst_order_seen
-            over_provisioned = bool(1 <= seen_dst < cfg_dst)
+            status = detection_status(self._entry, client)
+            over_provisioned = status.over_provisioned
             attrs.update({
-                "configured_max_sources":      cfg_src,
-                "configured_max_destinations": cfg_dst,
+                "configured_max_sources":      status.configured_sources,
+                "configured_max_destinations": status.configured_destinations,
                 # Destinations the controller acknowledged via .I/.A interrogation
                 # (0 = could not detect — e.g. controller ignores .I)
-                "detected_destinations":       seen_dst,
+                "detected_destinations":       status.detected_destinations,
                 "destinations_over_provisioned": over_provisioned,
-                "suggested_max_destinations":  seen_dst if seen_dst >= 1 else cfg_dst,
+                "suggested_max_destinations":  status.suggested_max_destinations,
                 # Sources can't be enumerated over the protocol — grow-only hint
-                "detected_min_sources":        seen_src,
-                "suggested_max_sources":       max(cfg_src, seen_src),
+                "detected_min_sources":        status.detected_min_sources,
+                "suggested_max_sources":       status.suggested_max_sources,
             })
         action = bool(orders) or over_provisioned
         attrs["action_required"] = action
@@ -191,9 +191,13 @@ class QuartzProfileMismatchSensor(BinarySensorEntity):
         detected destination count via .A/.UV replies)."""
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         if "mismatch_listeners" in entry_data:
-            entry_data["mismatch_listeners"].append(self._on_mismatch)
+            self.async_on_remove(
+                subscribe_listener(entry_data["mismatch_listeners"], self._on_mismatch)
+            )
         if "route_listeners" in entry_data:
-            entry_data["route_listeners"].append(self._on_route)
+            self.async_on_remove(
+                subscribe_listener(entry_data["route_listeners"], self._on_route)
+            )
 
     @callback
     def _on_mismatch(self) -> None:

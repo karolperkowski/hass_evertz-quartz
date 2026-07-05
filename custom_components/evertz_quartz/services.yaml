@@ -30,10 +30,12 @@ route:
     destination:
       name: Destination
       description: >
-        Destination port number — the Quartz crosspoint address (Port Number
-        column in the profile CSV, not the sequential Order).
+        Destination Order number — the sequential profile index (Order
+        column in the profile CSV). MAGNUM routes by Order; the Quartz
+        crosspoint Port Number is stored for diagnostics only and must
+        NOT be used here.
       required: true
-      example: 323
+      example: 1
       selector:
         number:
           min: 1
@@ -43,10 +45,11 @@ route:
     source:
       name: Source
       description: >
-        Source port number — the Quartz crosspoint address (Port Number
-        column in the profile CSV, not the sequential Order).
+        Source Order number — the sequential profile index (Order column
+        in the profile CSV). MAGNUM routes by Order; the Quartz crosspoint
+        Port Number is stored for diagnostics only and must NOT be used here.
       required: true
-      example: 1
+      example: 360
       selector:
         number:
           min: 1

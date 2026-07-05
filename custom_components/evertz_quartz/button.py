@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
+from typing import TYPE_CHECKING
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
@@ -13,8 +13,11 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+if TYPE_CHECKING:
+    from homeassistant.helpers.entity import DeviceInfo
+
 from .const import CONF_CSV_LOADED, DOMAIN
-from .helpers import router_display_name
+from .helpers import detection_status, router_display_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,7 +96,7 @@ class QuartzResyncButton(ButtonEntity):
 
     @property
     def available(self) -> bool:
-        return self._client._connected  # noqa: SLF001
+        return self._client.connected
 
     async def async_press(self) -> None:
         router = self._entry.data.get("router_name") or self._entry.data.get("host", "")
@@ -135,16 +138,19 @@ class QuartzDetectDestinationsButton(ButtonEntity):
 
     @property
     def available(self) -> bool:
-        return self._client._connected  # noqa: SLF001
+        return self._client.connected
 
     async def async_press(self) -> None:
         router = router_display_name(self._entry)
         # Re-interrogate routes; the .A replies refresh the detected dest count.
         await self._client.query_all_routes()
-        await asyncio.sleep(2)  # let the listen loop process the replies
+        # Wait for the replies instead of guessing — returns early when the
+        # controller stops answering (or never does).
+        await self._client.wait_interrogation_drain()
 
-        configured = self._client.max_destinations
-        detected   = self._client.max_dst_order_seen
+        status     = detection_status(self._entry, self._client)
+        configured = status.configured_destinations
+        detected   = status.detected_destinations
         notif_id   = f"evertz_quartz_{self._entry.entry_id}_detect"
 
         if detected < 1:
@@ -278,23 +284,30 @@ class QuartzClearCsvButton(ButtonEntity):
         new_data.pop("destination_names", None)
         new_data.pop("source_port_map", None)
         new_data.pop("destination_port_map", None)
+        new_data.pop("source_namespaces", None)
+        new_data.pop("destination_namespaces", None)
+        new_data.pop("hidden_source_orders", None)
+        new_data.pop("hidden_destination_orders", None)
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
 
         # Clear client state
         self._client.csv_loaded = False
         self._client.source_names.clear()
         self._client.destination_names.clear()
+        self._client.source_namespaces.clear()
+        self._client.destination_namespaces.clear()
+        self._client.hidden_sources.clear()
+        self._client.hidden_destinations.clear()
         # Restore identity port maps
         max_src = self._client.max_sources
         max_dst = self._client.max_destinations
         self._client.src_port_map = {n: n for n in range(1, max_src + 1)}
         self._client.dst_port_map = {n: n for n in range(1, max_dst + 1)}
 
-        # Update hass.data port maps too
         # Fire mnemonic callback so all entities redraw with fallback names
         for cb in self.hass.data[DOMAIN][self._entry.entry_id].get("mnemonic_listeners", []):
             self.hass.loop.call_soon_threadsafe(cb)
 
         # Try querying router for names now that csv_loaded is False
-        if self._client._connected:  # noqa: SLF001
+        if self._client.connected:
             await self._client.query_all_mnemonics()

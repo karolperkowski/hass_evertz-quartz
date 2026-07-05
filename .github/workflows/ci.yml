@@ -1,0 +1,52 @@
+name: CI
+
+# Lint, type-check, and test on every PR and push to main.
+# Runs next to the version-bump gate; the release workflow is unchanged.
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      - run: ruff check custom_components/ tests/
+
+  translations:
+    name: strings.json ↔ translations/en.json in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert the hand-synced twins are identical
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+          a = json.load(open("custom_components/evertz_quartz/strings.json"))
+          b = json.load(open("custom_components/evertz_quartz/translations/en.json"))
+          if a != b:
+              sys.exit(
+                  "strings.json and translations/en.json differ — every string "
+                  "change must be made in both (they are hand-synced twins)."
+              )
+          print("strings.json and translations/en.json are in sync")
+          EOF
+
+  test:
+    name: mypy + pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements_test.txt mypy
+      - run: mypy custom_components/evertz_quartz/
+      - run: pytest -q

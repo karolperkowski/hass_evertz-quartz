@@ -22,19 +22,29 @@ routers via a MAGNUM controller using the Quartz Remote Control Protocol
 
 ```
 custom_components/evertz_quartz/
-  __init__.py          Entry setup, multi-router service, CSV name loading
+  __init__.py          Entry setup, multi-router service, CSV name loading,
+                       startup-sync notification, over-provision detection
   quartz_client.py     Asyncio TCP client for Quartz protocol
-  config_flow.py       2-step setup UI — connect + CSV profile upload
-  options_flow.py      Configure panel — resize, re-import CSV, debug settings
+  config_flow.py       2-step setup UI + reconfigure step (host/port/name)
+  options_flow.py      Configure panel — resize, re-import CSV, read-only lists
   select.py            Destination select entities + dual log level controls
-  button.py            Resync buttons + Clear CSV Profile button
-  diagnostics.py       HA diagnostics download
+  button.py            Resync / Detect Destinations / Clean Up / Clear CSV buttons
+  lock.py              Destination lock entities (.BL/.BU/.BI/.BA)
+  binary_sensor.py     Connected + Profile Mismatch sensors
+  sensor.py            Last Connected, Profile summary, read-only source sensors
+  diagnostics.py       HA diagnostics download (host redacted)
   csv_parser.py        MAGNUM profile_availability.csv parser
-  helpers.py           effective() and router_display_name() shared helpers
+  helpers.py           effective(), router_display_name(), user_can_route(),
+                       notify_blocked_route(), detection_status(),
+                       subscribe_listener(), device_info()
   services.yaml        HA service schema for evertz_quartz.route
   const.py             All constants and defaults
-  strings.json / translations/en.json
+  strings.json / translations/en.json   (hand-synced twins — CI asserts equality)
   brand/icon.png
+
+tests/                 pytest suite (pytest-homeassistant-custom-component)
+.github/workflows/     ci.yml (ruff+mypy+pytest), validate.yml (HACS+hassfest),
+                       version-bump.yml, release.yml
 ```
 
 ---
@@ -70,8 +80,9 @@ take made from the MAGNUM UI or other controllers.
 MAGNUM may or may not echo `.UV` back after an HA-initiated take
 (still under test — see TEST_PLAN.md).
 
-**No keepalive needed:** MAGNUM holds TCP connections open. Invalid
-commands cause `.E` responses or disconnection.
+**Keepalive probe:** MAGNUM holds TCP connections open, but after 60 s of
+RX silence the client sends a `.I{level}1` probe to detect dead
+connections. Invalid commands cause `.E` responses or disconnection.
 
 ---
 
@@ -85,6 +96,11 @@ VP, DST, 323, QC4720, 0, 1
 
 - **Order** = MAGNUM's sequential profile index — used in all protocol commands
 - **Port Number** = Quartz crosspoint address — stored for diagnostics only
+- **Hidden? = 1** rows are kept in the name/port maps (MAGNUM still uses their
+  Orders in `.UV`/`.SV`) but excluded from the source dropdown options; their
+  Orders are persisted in `entry.data` (`hidden_source_orders` /
+  `hidden_destination_orders`) and mirrored to `client.hidden_sources` /
+  `client.hidden_destinations`
 - 438 sources in the tested profile have Order ≠ Port (tieline/remote sources)
 - Tested profile: 1164 sources, 1 destination (QC4720, Order=1, Port=323)
 
@@ -100,9 +116,30 @@ VP, DST, 323, QC4720, 0, 1
 
 ### Routing
 - `.SV{level}{dest_order},{src_order}\r` sent to route
-- Optimistic state updated immediately in `client.routes`
+- Optimistic state updated immediately in `client.routes`; an `.E` within 5 s
+  of the take rolls it back to the previous source (a `.UV` echo disarms the
+  rollback)
 - `.UV{level}{dest_order},{src_order}` received for external changes
 - `.I{level}{dest_order}` sent on connect to query current state
+
+### Connect-time sync & .E attribution
+- The reader task runs concurrently with the connect-time sweeps; sweeps are
+  batched (`SWEEP_BATCH=8` commands per drain, 50 ms between batches)
+- `.E` replies are attributed best-effort: pending take (rollback) →
+  outstanding `.I` (`interrogate_rejected` — expected on over-provisioned
+  profiles) → outstanding mnemonic query (`mnemonic_rejected`) → real error
+  (`recent_errors`)
+- Mnemonic sweeps (`.RD`/`.RT`) abort after 5 consecutive `.E` — MAGNUM
+  rejects them all, and the guard prevents a 1000+-message error storm
+- Over-provision detection runs after the sync sweep completes (driven by
+  `sync_callback`), not on a wall-clock timer
+- Reconnect delay backs off exponentially (configured value → ×2 per failed
+  cycle → 120 s cap), reset on success
+
+### Select options
+- Per-entity cached options list + `label → Order` reverse map, invalidated
+  on mnemonic/name updates; duplicate Global Names get an ` (Order N)` suffix
+  so labels resolve unambiguously; hidden sources are filtered out
 
 ### Startup sync notification
 On the first connect after startup/reload, a persistent notification tells the
@@ -116,6 +153,12 @@ unload. Reconnects during the same session do not re-announce.
 Any CSV import via the Configure panel triggers a full HA reload.
 Source Order values may shift even if counts are unchanged (profile reordering).
 Counts are written to `entry.data` before reload so they are available immediately.
+
+### One entry per router
+Config entries carry a `{host}:{port}` unique_id — adding the same endpoint
+twice aborts with `already_configured`. Host/port/name can be changed later
+via the **Reconfigure** menu item (profile data, CSV names, and options are
+preserved; the entry reloads).
 
 ### Hybrid per-router logging
 Each QuartzClient has a named logger:
@@ -150,13 +193,20 @@ routing commands.
 | Entity | Type | Category |
 |---|---|---|
 | `select.{name}_{dest}` | Select | — |
+| `lock.{name}_{dest}_lock` | Lock | — |
+| `sensor.{name}_{dest}_source` | Sensor | — (read-only destinations only) |
+| `binary_sensor.{name}_connected` | Binary sensor | — |
+| `binary_sensor.{name}_profile_mismatch` | Binary sensor | Diagnostic |
+| `sensor.{name}_last_connected` | Sensor | Diagnostic |
+| `sensor.{name}_profile` | Sensor | Diagnostic |
 | `select.{name}_log_level` | Select | Diagnostic |
 | `select.{name}_client_log_level` | Select | Diagnostic |
 | `button.{name}_resync_all` | Button | Diagnostic |
 | `button.{name}_resync_routes` | Button | Diagnostic |
 | `button.{name}_resync_names` | Button | Diagnostic |
+| `button.{name}_detect_destinations` | Button | Diagnostic |
+| `button.{name}_clean_up_stale_entities` | Button | Diagnostic |
 | `button.{name}_clear_csv` | Button | Diagnostic |
-| `sensor.{name}_{dest}_source` | Sensor | — (read-only destinations only) |
 
 ### Read-only destinations
 Destinations selected in the Configure panel (`readonly_destinations`
@@ -206,11 +256,14 @@ Allowed Users, Max Sources, Max Destinations, CSV Upload
 
 `client.stats` includes:
 - `sv_sent`, `interrogate_sent`, `interrogate_replied`, `route_updates_uv`
+- `interrogate_rejected`, `mnemonic_rejected` — expected `.E` replies,
+  attributed instead of polluting `recent_errors`
 - `last_rx_time`, `last_uv_time`, `last_sv_time`
 - `unhandled` — count of unrecognised messages
 - `trace` — ring buffer of last 100 TX/RX lines with ms timestamps
 
 Available in Settings → Devices → Evertz Quartz → Download Diagnostics.
+The router `host` is redacted in the download (safe for GitHub issues).
 
 ---
 
@@ -223,11 +276,18 @@ Available in Settings → Devices → Evertz Quartz → Download Diagnostics.
 
 ---
 
-## Test Plan
+## Testing
 
-See `TEST_PLAN.md` and the interactive test runner artifact in Claude.ai.
-The test runner calls the Claude API with full integration context and
-returns PASS/FAIL verdicts with specific findings.
+**Automated:** `tests/` runs with pytest +
+`pytest-homeassistant-custom-component` (`pip install -r requirements_test.txt`,
+then `pytest`). CI (`.github/workflows/ci.yml`) runs ruff, mypy, pytest, and a
+strings.json ↔ translations/en.json equality assert on every PR;
+`validate.yml` runs HACS + hassfest validation. Keep tests passing and add
+coverage with behavioral changes.
+
+**On-router:** see `TEST_PLAN.md` and the interactive test runner artifact in
+Claude.ai. The test runner calls the Claude API with full integration context
+and returns PASS/FAIL verdicts with specific findings.
 
 **Key tests to run first:**
 1. Test 1.2 — does MAGNUM respond to `.I`?

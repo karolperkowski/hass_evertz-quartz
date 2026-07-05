@@ -10,8 +10,8 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components.file_upload import process_uploaded_file
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_PORT
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
     FileSelector,
     FileSelectorConfig,
@@ -75,23 +75,27 @@ def _parse_uploaded_csv(hass, upload_id: str) -> tuple[dict, list[str]]:
         overrides["source_names"]             = result.source_names
         overrides["source_port_map"]          = result.source_port_map
         overrides["source_namespaces"]        = result.source_namespaces
+        overrides["hidden_source_orders"]     = result.hidden_source_orders
     if result.max_destinations > 0:
         overrides[CONF_MAX_DESTINATIONS]       = result.max_destinations
         overrides["destination_names"]         = result.destination_names
         overrides["destination_port_map"]      = result.destination_port_map
         overrides["destination_namespaces"]    = result.destination_namespaces
+        overrides["hidden_destination_orders"] = result.hidden_destination_orders
 
     warnings = list(result.warnings)
     if result.has_port_gaps:
         warnings.append(
-            f"Non-contiguous port numbering detected "
-            f"(Order ≠ Port Number for some rows). "
-            f"Routing will use the correct Quartz port addresses."
+            "Non-contiguous port numbering detected "
+            "(Order ≠ Port Number for some rows). "
+            "Routing correctly uses Order numbers."
         )
     if result.hidden_sources or result.hidden_destinations:
         warnings.append(
             f"{result.hidden_sources} hidden source(s) and "
-            f"{result.hidden_destinations} hidden destination(s) skipped."
+            f"{result.hidden_destinations} hidden destination(s) — kept in the "
+            "profile (their Orders stay valid) but hidden sources are excluded "
+            "from the source dropdowns."
         )
 
     _LOGGER.info("CSV uploaded (%s): %s", result.format_detected, result.summary)
@@ -116,17 +120,24 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._destination_port_map: dict = {}
         self._source_namespaces: dict = {}
         self._destination_namespaces: dict = {}
+        self._hidden_source_orders: list[int] = []
+        self._hidden_destination_orders: list[int] = []
         self._csv_warnings: list[str] = []
 
     # ── Step 1: connection ────────────────────────────────────────────────
 
-    async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_user(self, user_input: dict | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
             host = user_input[CONF_HOST].strip()
             port = user_input[CONF_PORT]
             name = user_input.get(CONF_NAME, "").strip()
+
+            # One entry per router endpoint — two clients fighting over the
+            # same TCP connection cause duplicate entities and flapping.
+            await self.async_set_unique_id(f"{host}:{port}")
+            self._abort_if_unique_id_configured()
 
             try:
                 await _validate_connection(host, port)
@@ -148,9 +159,66 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    # ── Reconfigure: change host/port/name without losing options/CSV ─────
+
+    async def async_step_reconfigure(self, user_input: dict | None = None) -> ConfigFlowResult:
+        """Reconfigure the connection (Settings → Integration → Reconfigure).
+
+        Only host/port/name change here — profile data, CSV names, options,
+        and entities are preserved. The entry reloads after saving.
+        """
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            host = user_input[CONF_HOST].strip()
+            port = user_input[CONF_PORT]
+            name = user_input.get(CONF_NAME, "").strip()
+
+            unique_id = f"{host}:{port}"
+            for other in self._async_current_entries():
+                if other.entry_id == entry.entry_id:
+                    continue
+                if other.unique_id == unique_id or (
+                    other.data.get(CONF_HOST) == host
+                    and other.data.get(CONF_PORT) == port
+                ):
+                    return self.async_abort(reason="already_configured")
+
+            try:
+                await _validate_connection(host, port)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            else:
+                await self.async_set_unique_id(unique_id)
+                return self.async_update_reload_and_abort(
+                    entry,
+                    unique_id=unique_id,
+                    title=name or entry.title,
+                    data_updates={
+                        CONF_HOST: host,
+                        CONF_PORT: port,
+                        CONF_NAME: name or entry.data.get(CONF_NAME) or host,
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema({
+                vol.Required(CONF_HOST, default=entry.data.get(CONF_HOST, "")): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.TEXT)
+                ),
+                vol.Required(CONF_PORT, default=entry.data.get(CONF_PORT, DEFAULT_PORT)): int,
+                vol.Optional(CONF_NAME, default=entry.data.get(CONF_NAME, "")): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.TEXT)
+                ),
+            }),
+            errors=errors,
+        )
+
     # ── Step 2: profile / CSV ─────────────────────────────────────────────
 
-    async def async_step_profile(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_profile(self, user_input: dict | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -169,15 +237,16 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         self._source_names         = overrides.get("source_names", {})
                         self._source_port_map      = overrides.get("source_port_map", {})
                         self._source_namespaces    = overrides.get("source_namespaces", {})
+                        self._hidden_source_orders = overrides.get("hidden_source_orders", [])
                     if CONF_MAX_DESTINATIONS in overrides:
                         self._max_destinations      = overrides[CONF_MAX_DESTINATIONS]
                         self._destination_names     = overrides.get("destination_names", {})
                         self._destination_port_map  = overrides.get("destination_port_map", {})
                         self._destination_namespaces = overrides.get("destination_namespaces", {})
+                        self._hidden_destination_orders = overrides.get("hidden_destination_orders", [])
                     if not errors:
                         # CSV parsed — save immediately using CSV values + any
                         # other fields the user already filled in on the form
-                        csv_was_uploaded = True
                         data = {
                             CONF_HOST:                self._host,
                             CONF_PORT:                self._port,
@@ -192,12 +261,13 @@ class EvertzQuartzConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             "destination_names":      {str(k): v for k, v in self._destination_names.items()},
                             "source_namespaces":      {str(k): v for k, v in self._source_namespaces.items()},
                             "destination_namespaces": {str(k): v for k, v in self._destination_namespaces.items()},
+                            "hidden_source_orders":      list(self._hidden_source_orders),
+                            "hidden_destination_orders": list(self._hidden_destination_orders),
                         }
                         return self.async_create_entry(title=self._router_name, data=data)
 
             if not errors:
                 # No CSV — save with manually entered values
-                csv_was_uploaded = False
                 data = {
                     CONF_HOST:              self._host,
                     CONF_PORT:              self._port,

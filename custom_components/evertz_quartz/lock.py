@@ -8,7 +8,6 @@ from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS, DOMAIN
@@ -17,6 +16,7 @@ from .helpers import (
     effective,
     notify_blocked_route,
     router_display_name,
+    subscribe_listener,
     user_can_route,
 )
 
@@ -91,7 +91,7 @@ class QuartzDestinationLock(LockEntity):
 
     @property
     def available(self) -> bool:
-        return self._client._connected  # noqa: SLF001
+        return self._client.connected
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -181,7 +181,9 @@ class QuartzDestinationLock(LockEntity):
         """Register for lock state updates."""
         entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         if "lock_listeners" in entry_data:
-            entry_data["lock_listeners"].append(self._on_lock_update)
+            self.async_on_remove(
+                subscribe_listener(entry_data["lock_listeners"], self._on_lock_update)
+            )
 
     @callback
     def _on_lock_update(self, dest_order: int, lock_value: int) -> None:

@@ -27,7 +27,13 @@ from .const import (
     DEFAULT_RECONNECT_DELAY,
     DOMAIN,
 )
-from .helpers import effective, notify_blocked_route, router_display_name, user_can_route
+from .helpers import (
+    detection_status,
+    effective,
+    notify_blocked_route,
+    router_display_name,
+    user_can_route,
+)
 from .quartz_client import QuartzClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,24 +68,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.loop.call_soon_threadsafe(cb)
 
     async def _detection_check() -> None:
-        """After connect, compare the detected destination count to the configured
-        size and warn if the profile is over-provisioned.
+        """Compare the detected destination count to the configured size and
+        warn if the profile is over-provisioned.
 
-        The connect-time .I interrogation makes the controller answer .A for real
-        destinations and .E for ones that don't exist, so client.max_dst_order_seen
-        settles at the true count. Detection only — the user applies any change via
-        Configure → Update Profile. Skips silently when the controller ignores .I
-        (detected count stays 0).
+        Runs after the connect-time sync sweep completes (driven by
+        sync_callback, not a wall-clock guess): the .I interrogation makes the
+        controller answer .A for real destinations and .E for ones that don't
+        exist, so client.max_dst_order_seen settles at the true count.
+        Detection only — the user applies any change via Configure → Update
+        Profile. Skips silently when the controller ignores .I (detected
+        count stays 0).
         """
-        await asyncio.sleep(10)
         data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
         client = data.get("client")
-        if not client or not client._connected:  # noqa: SLF001
+        if not client or not client.connected:
             return
-        configured = effective(entry, CONF_MAX_DESTINATIONS, DEFAULT_MAX_DESTINATIONS)
-        detected = client.max_dst_order_seen
-        if not (1 <= detected < configured):
+        status = detection_status(entry, client)
+        if not status.over_provisioned:
             return
+        detected = status.detected_destinations
+        configured = status.configured_destinations
         rname = router_display_name(entry)
         _LOGGER.info(
             "[%s] Over-provisioned: detected %d destination(s), configured %d",
@@ -110,7 +118,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # completes. Tell the user that's expected — once, on the first connect —
     # and clear the message automatically when the sweep finishes.
     sync_notif_id = f"evertz_quartz_{entry.entry_id}_startup_sync"
-    sync_state: dict = {"notified": False, "t0": None}
+    sync_state: dict = {"notified": False, "t0": None, "finish_task": None}
+
+    def _cancel_finish_task() -> None:
+        task: asyncio.Task | None = sync_state.get("finish_task")
+        if task and not task.done():
+            task.cancel()
+        sync_state["finish_task"] = None
 
     def _dismiss_sync_notification() -> None:
         hass.async_create_task(
@@ -156,7 +170,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     router_display_name(entry), elapsed,
                     len(client.routes), len(client.locks),
                 )
-        hass.loop.call_soon_threadsafe(lambda: hass.async_create_task(_finish()))
+            # Interrogation replies have drained — check for over-provisioning
+            await _detection_check()
+
+        def _schedule() -> None:
+            _cancel_finish_task()  # reconnect while a grace task is pending
+            sync_state["finish_task"] = hass.async_create_task(_finish())
+
+        hass.loop.call_soon_threadsafe(_schedule)
 
     def _connection_callback(connected: bool) -> None:
         name = router_display_name(entry)
@@ -168,10 +189,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 sync_state["notified"] = True
                 sync_state["t0"] = time.monotonic()
                 hass.loop.call_soon_threadsafe(lambda: hass.async_create_task(_announce_sync()))
-            hass.loop.call_soon_threadsafe(lambda: hass.async_create_task(_detection_check()))
         else:
             # Connection dropped — a lingering "synchronizing" message would lie
             hass.loop.call_soon_threadsafe(_dismiss_sync_notification)
+            hass.loop.call_soon_threadsafe(_cancel_finish_task)
 
     def _lock_callback(dest_order: int, lock_value: int) -> None:
         """Called by client when a .BA lock state message is received."""
@@ -276,6 +297,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "[%s] No namespace data in CSV — namespace filtering disabled. "
                 "Re-import CSV to enable cross-namespace route blocking.", rname
             )
+        # Hidden rows stay in the name/port maps (MAGNUM still uses their
+        # Orders) but are excluded from the source dropdown options.
+        client.hidden_sources = {int(o) for o in entry.data.get("hidden_source_orders", [])}
+        client.hidden_destinations = {int(o) for o in entry.data.get("hidden_destination_orders", [])}
+        if client.hidden_sources or client.hidden_destinations:
+            _LOGGER.debug(
+                "[%s] Hidden profile rows: %d source(s), %d destination(s)",
+                rname, len(client.hidden_sources), len(client.hidden_destinations),
+            )
 
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,
@@ -290,7 +320,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await client.start()
 
     for _ in range(20):
-        if client._connected:  # noqa: SLF001
+        if client.connected:
             break
         await asyncio.sleep(0.5)
     else:
@@ -301,6 +331,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    entry.async_on_unload(_cancel_finish_task)
 
     if not hass.services.has_service(DOMAIN, "route"):
         _register_route_service(hass)

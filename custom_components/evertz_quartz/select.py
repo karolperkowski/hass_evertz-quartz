@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.entity import DeviceInfo
 
 from .const import (
     CONF_MAX_DESTINATIONS,
@@ -21,6 +25,7 @@ from .helpers import (
     notify_blocked_route,
     readonly_destinations,
     router_display_name,
+    subscribe_listener,
     user_can_route,
 )
 
@@ -81,6 +86,11 @@ class QuartzDestinationSelect(SelectEntity):
         self._client = client
         self._order = order   # destination Order index (MAGNUM numbering)
         self._attr_unique_id = f"{entry.entry_id}_dest_{order}"
+        # Options are expensive to build at 1000+ sources and HA reads them on
+        # every state write — cache and invalidate on mnemonic/name updates.
+        self._options_cache: list[str] | None = None
+        self._label_to_order: dict[str, int] = {}
+        self._order_to_label: dict[int, str] = {}
 
     @property
     def name(self) -> str:
@@ -93,8 +103,14 @@ class QuartzDestinationSelect(SelectEntity):
     def device_info(self) -> DeviceInfo:
         return _device_info(self._entry)
 
-    @property
-    def options(self) -> list[str]:
+    def _rebuild_options(self) -> None:
+        """Build the dropdown labels and both label↔Order lookup maps.
+
+        Sources are filtered to the destination's namespace (when namespace
+        data exists) and hidden profile rows are excluded. Duplicate Global
+        Names get an " (Order N)" suffix so every label resolves to exactly
+        one source Order.
+        """
         dest_ns = self._client.destination_namespaces.get(self._order)
         has_ns_data = bool(self._client.source_namespaces)
 
@@ -104,28 +120,56 @@ class QuartzDestinationSelect(SelectEntity):
                 o for o, ns in self._client.source_namespaces.items()
                 if ns == dest_ns
             )
-        elif not dest_ns and has_ns_data:
-            # Destination has no namespace — fail open (show all), log once at startup
-            valid = list(range(1, self._client.max_sources + 1))
         else:
-            # No namespace data at all — show everything (no CSV or non-MAGNUM)
+            # No namespace data, or destination has no namespace — fail open
             valid = list(range(1, self._client.max_sources + 1))
 
-        return [
-            self._client.source_names.get(i) or f"Source {i}"
-            for i in valid
-        ]
+        hidden = self._client.hidden_sources
+        if hidden:
+            valid = [o for o in valid if o not in hidden]
+
+        base = {
+            o: self._client.source_names.get(o) or f"Source {o}"
+            for o in valid
+        }
+        counts: dict[str, int] = {}
+        for label in base.values():
+            counts[label] = counts.get(label, 0) + 1
+
+        self._order_to_label = {
+            o: (f"{label} (Order {o})" if counts[label] > 1 else label)
+            for o, label in base.items()
+        }
+        self._label_to_order = {v: k for k, v in self._order_to_label.items()}
+        self._options_cache = list(self._order_to_label.values())
+
+    def _invalidate_options(self) -> None:
+        self._options_cache = None
+
+    @property
+    def options(self) -> list[str]:
+        if self._options_cache is None:
+            self._rebuild_options()
+        return self._options_cache
 
     @property
     def current_option(self) -> str | None:
         src_order = self._client.routes.get(self._order)
         if src_order is None:
             return None
-        return self._client.source_names.get(src_order) or f"Source {src_order}"
+        if self._options_cache is None:
+            self._rebuild_options()
+        # Fall back to the raw name for sources outside the option list
+        # (hidden or cross-namespace routes made by other controllers).
+        return (
+            self._order_to_label.get(src_order)
+            or self._client.source_names.get(src_order)
+            or f"Source {src_order}"
+        )
 
     @property
     def available(self) -> bool:
-        return self._client._connected  # noqa: SLF001
+        return self._client.connected
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -146,7 +190,7 @@ class QuartzDestinationSelect(SelectEntity):
             "router":            self._entry.data.get("router_name") or self._entry.data.get("host", ""),
             "host":              self._entry.data.get("host", ""),
             "port":              self._entry.data.get("port", ""),
-            "connected":         self._client._connected,  # noqa: SLF001
+            "connected":         self._client.connected,
             "destination_order": self._order,
             "destination_namespace": dest_ns,
             "source_order":      src_order,
@@ -162,11 +206,9 @@ class QuartzDestinationSelect(SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Find source Order by label, check namespace, and route."""
-        src_order = next(
-            (i for i in range(1, self._client.max_sources + 1)
-             if (self._client.source_names.get(i) or f"Source {i}") == option),
-            None,
-        )
+        if self._options_cache is None:
+            self._rebuild_options()
+        src_order = self._label_to_order.get(option)
         if src_order is None:
             _LOGGER.warning(
                 "[%s] Cannot route dest Order=%d: unknown source %r",
@@ -230,8 +272,12 @@ class QuartzDestinationSelect(SelectEntity):
 
     async def async_added_to_hass(self) -> None:
         entry_data = self.hass.data[DOMAIN][self._entry.entry_id]
-        entry_data["route_listeners"].append(self._on_route_update)
-        entry_data["mnemonic_listeners"].append(self._on_mnemonic_update)
+        self.async_on_remove(
+            subscribe_listener(entry_data["route_listeners"], self._on_route_update)
+        )
+        self.async_on_remove(
+            subscribe_listener(entry_data["mnemonic_listeners"], self._on_mnemonic_update)
+        )
 
     @callback
     def _on_route_update(self, dest_order: int, src_order: int, levels: str) -> None:
@@ -240,6 +286,8 @@ class QuartzDestinationSelect(SelectEntity):
 
     @callback
     def _on_mnemonic_update(self) -> None:
+        # Names changed — the cached option labels are stale
+        self._invalidate_options()
         self.async_write_ha_state()
 
 
