@@ -401,6 +401,184 @@ Restart HA 3 times in quick succession. Check that orphaned TCP connections do n
 
 ---
 
+## 8. v1.22 Behavior Validation
+
+> **New in v1.22.x:** batched sync sweeps, `.E` attribution + storm guard,
+> optimistic-take rollback, reconnect backoff, event-driven detection.
+> All were verified against a simulated router; this section confirms them
+> against the real controller. Run with **Client Log Level = DEBUG**.
+>
+> **Capture bundle:** after finishing this section, download diagnostics
+> (host is redacted — safe to share) and save the debug log. Together they
+> answer every question below even if a step was ambiguous live.
+
+### 8.1 Batched sweep integrity ⭐ highest risk
+
+The connect sync now writes **8 commands per TCP flush** (50 ms between
+batches) instead of one command per 50 ms. Verify the controller keeps up.
+
+**Steps:**
+1. Reload the integration, wait for the sync notification to clear
+2. Download diagnostics and check `stats`
+3. Check every lock entity has a state (not `unknown`)
+
+**Expected:**
+- `interrogate_replied + interrogate_rejected` ≈ `interrogate_sent`
+  (every `.I` was answered one way or the other)
+- `locks` section lists every destination
+- No gaps in the `protocol_trace` — bursts of 8 `TX` lines each followed by
+  the corresponding `RX` replies
+
+✅ **Pass** — all interrogations accounted for, all locks known  
+❌ **Fail** — replies missing or `.E` storms → the controller can't absorb
+the batch size. Report the diagnostics; `SWEEP_BATCH` / `SWEEP_BATCH_PAUSE`
+in `quartz_client.py` will be lowered or made configurable.
+
+---
+
+### 8.2 `.E` attribution on a clean connect
+
+Expected `.E` replies must land in dedicated stats, not `recent_errors`.
+
+**Steps:**
+1. Reload the integration, wait ~10 seconds
+2. Download diagnostics and check `stats`
+
+**Expected (over-provisioned profile, CSV loaded):**
+- `interrogate_rejected` ≈ configured − real destinations
+- `mnemonic_rejected` = 0 (CSV loaded → no mnemonic sweep)
+- `recent_errors` is **empty**
+
+✅ **Pass** — counts as above, `recent_errors` empty  
+❌ **Fail** — `Router returned .E` entries in `recent_errors` on a clean
+connect → attribution priority needs tuning; share the protocol trace
+
+---
+
+### 8.3 Mnemonic sweep abort (optional — requires clearing the CSV)
+
+Only run if you can tolerate generic names until you re-import the CSV.
+
+**Steps:**
+1. Press **Clear CSV Profile**, then reload the integration
+2. Watch the logs during connect
+3. Re-import the CSV afterwards
+
+**Expected:**
+```
+INFO [ROUTER-NAME] Aborting .RT mnemonic sweep at Order N — 5 consecutive .E replies
+```
+- `mnemonic_rejected` stays small (≈ 8–16, not hundreds)
+
+✅ **Pass** — sweep aborts after roughly one batch per query type  
+❌ **Fail** — hundreds of `.RT` TX lines / `.E` replies → storm guard not
+engaging on real traffic
+
+---
+
+### 8.4 `.UV` echo → rollback correlation ⭐ decides a follow-up
+
+Re-run of test 3.3, now with a concrete consequence. An `.E` arriving
+within **5 s** of a take rolls the dropdown back. A `.UV` echo for that
+destination disarms the rollback.
+
+**Steps:**
+1. Make a take from HA
+2. Within 3 seconds, check logs for `RX ← '.UV...'` for that destination
+
+**Record which one:**
+- **Echo YES** → rollback is airtight; nothing to change
+- **Echo NO** → there is a real 5-second window where an *unrelated* `.E`
+  could wrongly snap a good take back → `SV_ERROR_WINDOW` should be
+  shortened (or rollback gated differently) — open an issue with the trace
+
+---
+
+### 8.5 Rejected take rolls back
+
+**Steps (pick whichever is available):**
+- **A:** Protect/lock a destination *from the MAGNUM side* (so HA's lock
+  state doesn't know yet), then take to it from the HA dropdown
+- **B:** Call `evertz_quartz.route` with a destination Order that exists in
+  config but not on the controller (over-provisioned placeholder)
+
+**Expected:**
+```
+WARNING [ROUTER-NAME] Router rejected take on DEST-A (Order 1) — rolled back to previous source (N)
+```
+- Variant A: the dropdown snaps back to the previous source within ~1 s
+- The rejection appears in `recent_errors` (this one is a *real* error)
+
+✅ **Pass** — state restored, warning logged  
+❌ **Fail** — HA keeps showing the new source even though the router never
+switched (the pre-v1.21 bug), or a *successful* take got rolled back
+
+---
+
+### 8.6 Startup sync notification timing
+
+**Steps:**
+1. Reload the integration
+2. Note the estimate in the "Synchronizing" notification
+3. Time how long until it clears and destination entities are populated
+
+✅ **Pass** — clears automatically; actual time within ~2× the estimate
+(the log line `Startup sync complete in N.Ns` gives the exact number)  
+❌ **Fail** — notification lingers after entities populate, or never clears
+
+---
+
+### 8.7 Detect Destinations returns promptly
+
+The button now waits for actual replies (with stall detection) instead of a
+fixed 2 s sleep.
+
+**Steps:**
+1. Press **Detect Destinations**
+2. Time until the result notification appears
+
+✅ **Pass** — notification within a few seconds; detected count correct  
+❌ **Fail** — takes the full 10 s timeout every time (stall detection not
+triggering), or wrong count
+
+---
+
+### 8.8 Reconnect backoff
+
+**Steps:**
+1. Block network to the controller
+2. Watch `Reconnecting in Ns` DEBUG lines for 2–3 minutes
+3. Restore network
+
+**Expected:** delays double from the configured floor (5 → 10 → 20 → 40 →
+80 → 120 → 120 …), and the first reconnect cycle after restoring the
+network succeeds. After a successful connect, a later drop starts again at
+the floor (5 s), not at 120 s.
+
+✅ **Pass** — doubling observed, cap at 120 s, reset on success  
+❌ **Fail** — constant delay, or stuck at the cap after recovery
+
+---
+
+### 8.9 Keepalive probe still healthy
+
+**Steps:**
+1. Leave the connection idle for >60 s (no takes, no external changes)
+2. Check logs
+
+**Expected:**
+```
+DEBUG [ROUTER-NAME] 60s idle (...) — sending keepalive probe
+DEBUG [ROUTER-NAME] TX → .IV1 (keepalive probe, 60s silence)
+```
+- Connection stays up; probe replies (`.A` or `.E`) do not appear in
+  `recent_errors`
+
+✅ **Pass** — probe sent, connection stable, no error noise  
+❌ **Fail** — disconnect after idle, or probes polluting `recent_errors`
+
+---
+
 ## Results Template
 
 ```
@@ -446,4 +624,17 @@ Tester:
 7.1 Unknown source:            PASS / FAIL
 7.2 HA restart:                PASS / FAIL
 7.3 Rapid restarts:            PASS / FAIL
+
+── v1.22 Behavior Validation ───────────────────────────────────────
+8.1 Batched sweep integrity:   PASS / FAIL
+8.2 .E attribution:            PASS / FAIL
+8.3 Mnemonic sweep abort:      PASS / FAIL / SKIPPED
+8.4 .UV echo after HA take:    echoes .UV: YES / NO
+8.5 Rejected take rollback:    PASS / FAIL
+8.6 Sync notification timing:  PASS / FAIL — estimate: Ns, actual: Ns
+8.7 Detect Destinations:       PASS / FAIL
+8.8 Reconnect backoff:         PASS / FAIL
+8.9 Keepalive probe:           PASS / FAIL
+
+Diagnostics downloaded and attached: YES / NO
 ```
