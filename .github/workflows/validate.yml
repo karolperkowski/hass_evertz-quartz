@@ -20,6 +20,10 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+          # topics/description are repo *settings*, not repo content — they
+          # can't be fixed from a PR. Remove this once the repository has a
+          # description and topics set (About panel on the repo main page).
+          ignore: "topics description"
 
   hassfest:
     name: hassfest
